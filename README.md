@@ -18,9 +18,11 @@ uvicorn app.main:app --reload
 OPENROUTER_API_KEY=your_openrouter_api_key
 OPENROUTER_MODEL=mistralai/mistral-7b-instruct:free
 SUPABASE_URL=your_supabase_project_url
-SUPABASE_SERVICE_KEY=your_supabase_service_role_key
+SUPABASE_SERVICE_KEY=your_legacy_service_role_jwt_key_starts_with_eyJ
 FRONTEND_URL=http://localhost:5173
 ```
+
+`SUPABASE_SERVICE_KEY` must be Supabase's legacy `service_role` JWT API key, usually starting with `eyJ`. Do not use the database password, JWT secret, anon key, publishable key, or `sb_secret_...` key.
 
 ## API Routes
 

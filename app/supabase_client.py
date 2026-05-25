@@ -9,8 +9,9 @@ from app.config import settings
 
 SUPABASE_CONFIG_ERROR = (
     "Invalid Supabase configuration. Set SUPABASE_URL and SUPABASE_SERVICE_KEY "
-    "to real Supabase project values. SUPABASE_SERVICE_KEY must be the service_role "
-    "API key, not the JWT secret or anon key."
+    "to real Supabase project values. SUPABASE_SERVICE_KEY must be the legacy "
+    "service_role JWT API key that starts with eyJ, not the JWT secret, anon key, "
+    "publishable key, or sb_secret key."
 )
 
 
@@ -46,11 +47,9 @@ def validate_supabase_config() -> None:
         or service_key == "your_supabase_service_role_api_key"
         or service_key.startswith("sb_publishable_")
         or service_key.startswith("sb_anon_")
+        or service_key.startswith("sb_secret_")
     ):
         raise RuntimeError(SUPABASE_CONFIG_ERROR)
-
-    if service_key.startswith("sb_secret_"):
-        return
 
     jwt_payload = _decode_jwt_payload(service_key)
     if jwt_payload is None:
