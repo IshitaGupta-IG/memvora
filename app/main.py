@@ -24,6 +24,11 @@ async def health() -> dict:
     return {"status": "ok", "app": "Memvora"}
 
 
+@app.get("/me")
+async def me(user: dict = Depends(get_current_user)) -> dict:
+    return {"user": user}
+
+
 @app.get("/memories")
 async def get_memories(user: dict = Depends(get_current_user)) -> dict:
     memories = list_memories(user["id"])
@@ -72,4 +77,3 @@ async def chat(request: ChatRequest, user: dict = Depends(get_current_user)) -> 
     context = build_context(chunks)
     answer = await ask_openrouter(request.message, context)
     return ChatResponse(answer=answer, sources=chunks)
-

@@ -25,6 +25,7 @@ FRONTEND_URL=http://localhost:5173
 ## API Routes
 
 - `GET /health` - backend health check
+- `GET /me` - confirm the current signed-in or guest user
 - `GET /memories` - list current user's recent memories
 - `POST /upload` - upload PDF/TXT/Markdown or pasted text
 - `GET /search?query=...` - semantic search over memories
@@ -52,3 +53,8 @@ uvicorn app.main:app --host 0.0.0.0 --port $PORT
 
 Add all environment variables in Railway before deploying.
 
+## Guest Sign In
+
+Guest users are Supabase anonymous users. Enable anonymous sign-ins in Supabase:
+
+Supabase Dashboard -> Authentication -> Sign In / Providers -> Anonymous sign-ins.

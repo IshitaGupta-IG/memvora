@@ -13,12 +13,13 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
         user_response = supabase.auth.get_user(token)
         if not user_response.user:
             raise HTTPException(status_code=401, detail="Your session expired. Please sign in again.")
+        email = user_response.user.email
         return {
             "id": user_response.user.id,
-            "email": user_response.user.email,
+            "email": email,
+            "is_guest": email is None,
         }
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Could not verify your session.") from exc
-
