@@ -24,6 +24,8 @@ FRONTEND_URL=http://localhost:5173
 
 `SUPABASE_SERVICE_KEY` must be Supabase's server-side secret key, usually starting with `sb_secret_`, or the legacy `service_role` JWT API key, usually starting with `eyJ`. Do not use the database password, JWT secret, anon key, or publishable key.
 
+`OPENROUTER_MODEL` controls the chat and summary model. If it is missing or blank, Memvora uses `mistralai/mistral-7b-instruct:free`.
+
 ## API Routes
 
 - `GET /health` - backend health check
@@ -57,6 +59,16 @@ uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
 
 Add all environment variables in Railway before deploying.
+
+Required Railway backend variables:
+
+```env
+OPENROUTER_API_KEY=your_openrouter_api_key
+OPENROUTER_MODEL=mistralai/mistral-7b-instruct:free
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_SERVICE_KEY=your_supabase_secret_or_service_role_key
+FRONTEND_URL=your_deployed_memvora_ui_url
+```
 
 ## Guest Sign In
 
