@@ -1,10 +1,24 @@
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
+from postgrest.exceptions import APIError
 
 from app.services.embeddings import create_embedding, create_embeddings
 from app.services.text_processing import chunk_text
 from app.supabase_client import supabase
+
+SUPABASE_SCHEMA_ERROR = (
+    "Memvora database tables are missing. In Supabase, open SQL Editor and run "
+    "the full setup_supabase.sql file from the Memvora project root. Make sure "
+    "you are running it in the same Supabase project used by SUPABASE_URL."
+)
+
+
+def handle_supabase_error(exc: APIError) -> None:
+    message = str(exc)
+    if "public.memories" in message or "public.memory_chunks" in message or "match_memory_chunks" in message:
+        raise HTTPException(status_code=503, detail=SUPABASE_SCHEMA_ERROR) from exc
+    raise HTTPException(status_code=502, detail="Supabase request failed. Check backend logs and Supabase configuration.") from exc
 
 
 def create_memory(user_id: str, title: str, content: str, source_type: str) -> dict:
@@ -12,34 +26,37 @@ def create_memory(user_id: str, title: str, content: str, source_type: str) -> d
     if not chunks:
         raise HTTPException(status_code=400, detail="No readable text was found.")
 
-    memory_response = (
-        supabase.table("memories")
-        .insert(
-            {
-                "user_id": user_id,
-                "title": title,
-                "source_type": source_type,
-                "original_content": content,
-            }
+    try:
+        memory_response = (
+            supabase.table("memories")
+            .insert(
+                {
+                    "user_id": user_id,
+                    "title": title,
+                    "source_type": source_type,
+                    "original_content": content,
+                }
+            )
+            .execute()
         )
-        .execute()
-    )
 
-    memory = memory_response.data[0]
-    embeddings = create_embeddings(chunks)
+        memory = memory_response.data[0]
+        embeddings = create_embeddings(chunks)
 
-    chunk_rows = [
-        {
-            "memory_id": memory["id"],
-            "user_id": user_id,
-            "content": chunk,
-            "chunk_index": index,
-            "embedding": embedding,
-        }
-        for index, (chunk, embedding) in enumerate(zip(chunks, embeddings))
-    ]
+        chunk_rows = [
+            {
+                "memory_id": memory["id"],
+                "user_id": user_id,
+                "content": chunk,
+                "chunk_index": index,
+                "embedding": embedding,
+            }
+            for index, (chunk, embedding) in enumerate(zip(chunks, embeddings))
+        ]
 
-    supabase.table("memory_chunks").insert(chunk_rows).execute()
+        supabase.table("memory_chunks").insert(chunk_rows).execute()
+    except APIError as exc:
+        handle_supabase_error(exc)
 
     return {
         "memory": memory,
@@ -58,7 +75,10 @@ def list_memories(user_id: str, days: int | None = None, limit: int = 20) -> lis
         since = datetime.now(UTC) - timedelta(days=days)
         query = query.gte("created_at", since.isoformat())
 
-    response = query.order("created_at", desc=True).limit(limit).execute()
+    try:
+        response = query.order("created_at", desc=True).limit(limit).execute()
+    except APIError as exc:
+        handle_supabase_error(exc)
     return response.data
 
 
@@ -74,7 +94,11 @@ def search_memories(user_id: str, query: str, limit: int = 5) -> list[dict]:
             "match_user_id": user_id,
             "match_count": limit,
         },
-    ).execute()
+    )
+    try:
+        response = response.execute()
+    except APIError as exc:
+        handle_supabase_error(exc)
     return response.data
 
 
