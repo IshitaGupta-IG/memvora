@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 from fastapi import HTTPException
 
 from app.services.embeddings import create_embedding, create_embeddings
@@ -45,15 +47,18 @@ def create_memory(user_id: str, title: str, content: str, source_type: str) -> d
     }
 
 
-def list_memories(user_id: str) -> list[dict]:
-    response = (
+def list_memories(user_id: str, days: int | None = None, limit: int = 20) -> list[dict]:
+    query = (
         supabase.table("memories")
         .select("id,title,source_type,original_content,created_at")
         .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .limit(20)
-        .execute()
     )
+
+    if days:
+        since = datetime.now(UTC) - timedelta(days=days)
+        query = query.gte("created_at", since.isoformat())
+
+    response = query.order("created_at", desc=True).limit(limit).execute()
     return response.data
 
 
@@ -84,4 +89,3 @@ def build_context(chunks: list[dict]) -> str:
         context_parts.append(f"[Memory {index}: {title}]\n{content}")
 
     return "\n\n".join(context_parts)
-

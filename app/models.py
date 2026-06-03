@@ -27,3 +27,11 @@ class MemoryResponse(BaseModel):
 class SearchResponse(BaseModel):
     results: list[dict]
 
+
+class SummaryRequest(BaseModel):
+    days: int = Field(default=30, ge=1, le=365)
+
+
+class SummaryResponse(BaseModel):
+    summary: str
+    memories_count: int

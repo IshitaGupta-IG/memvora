@@ -29,9 +29,11 @@ FRONTEND_URL=http://localhost:5173
 - `GET /health` - backend health check
 - `GET /me` - confirm the current signed-in or guest user
 - `GET /memories` - list current user's recent memories
+- `GET /memories?days=7` - list memories from a recent time window
 - `POST /upload` - upload PDF/TXT/Markdown or pasted text
 - `GET /search?query=...` - semantic search over memories
 - `POST /chat` - ask a question using retrieved memory context
+- `POST /summary` - summarize recent memories and themes
 
 All routes except `/health` require a Supabase access token:
 

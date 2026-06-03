@@ -71,3 +71,20 @@ User question:
         raise HTTPException(status_code=502, detail=message) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="AI response failed. Please try again.") from exc
+
+
+async def summarize_memories(memories: list[dict], days: int) -> str:
+    if not memories:
+        return f"No memories were found from the last {days} days."
+
+    context = "\n\n".join(
+        f"{index}. {memory.get('title', 'Untitled')}\n{memory.get('original_content', '')[:1200]}"
+        for index, memory in enumerate(memories, start=1)
+    )
+
+    prompt = (
+        f"Summarize the user's memories from the last {days} days. "
+        "Organize the answer into: key themes, important details, open questions, and suggested next actions."
+    )
+
+    return await ask_openrouter(prompt, context)

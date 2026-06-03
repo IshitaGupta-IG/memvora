@@ -3,9 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth import get_current_user
 from app.config import settings
-from app.models import ChatRequest, ChatResponse, SearchResponse, UploadResponse
+from app.models import ChatRequest, ChatResponse, SearchResponse, SummaryRequest, SummaryResponse, UploadResponse
 from app.services.memories import build_context, create_memory, list_memories, search_memories
-from app.services.openrouter import ask_openrouter
+from app.services.openrouter import ask_openrouter, summarize_memories
 from app.services.text_processing import extract_text_from_file, preview_text
 
 app = FastAPI(title="Memvora API", version="1.0.0")
@@ -30,8 +30,10 @@ async def me(user: dict = Depends(get_current_user)) -> dict:
 
 
 @app.get("/memories")
-async def get_memories(user: dict = Depends(get_current_user)) -> dict:
-    memories = list_memories(user["id"])
+async def get_memories(days: int | None = None, user: dict = Depends(get_current_user)) -> dict:
+    if days is not None and (days < 1 or days > 365):
+        raise HTTPException(status_code=400, detail="Days must be between 1 and 365.")
+    memories = list_memories(user["id"], days=days)
     return {"memories": memories}
 
 
@@ -77,3 +79,10 @@ async def chat(request: ChatRequest, user: dict = Depends(get_current_user)) -> 
     context = build_context(chunks)
     answer = await ask_openrouter(request.message, context)
     return ChatResponse(answer=answer, sources=chunks)
+
+
+@app.post("/summary", response_model=SummaryResponse)
+async def summary(request: SummaryRequest, user: dict = Depends(get_current_user)) -> SummaryResponse:
+    memories = list_memories(user["id"], days=request.days, limit=30)
+    result = await summarize_memories(memories, request.days)
+    return SummaryResponse(summary=result, memories_count=len(memories))
