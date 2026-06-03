@@ -65,15 +65,32 @@ def validate_supabase_config() -> None:
         raise RuntimeError(SUPABASE_CONFIG_ERROR)
 
 
-validate_supabase_config()
-try:
-    supabase = create_client(
-        settings.supabase_url,
-        settings.supabase_service_key,
-        options=ClientOptions(
-            auto_refresh_token=False,
-            persist_session=False,
-        ),
-    )
-except Exception as exc:
-    raise RuntimeError(SUPABASE_CONFIG_ERROR) from exc
+def create_supabase_client():
+    validate_supabase_config()
+    try:
+        return create_client(
+            settings.supabase_url,
+            settings.supabase_service_key,
+            options=ClientOptions(
+                auto_refresh_token=False,
+                persist_session=False,
+            ),
+        )
+    except Exception as exc:
+        raise RuntimeError(SUPABASE_CONFIG_ERROR) from exc
+
+
+class LazySupabaseClient:
+    def __init__(self) -> None:
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            self._client = create_supabase_client()
+        return self._client
+
+    def __getattr__(self, name: str):
+        return getattr(self._get_client(), name)
+
+
+supabase = LazySupabaseClient()

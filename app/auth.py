@@ -1,5 +1,6 @@
 from fastapi import Header, HTTPException
 
+from app.supabase_client import SUPABASE_CONFIG_ERROR
 from app.supabase_client import supabase
 
 
@@ -21,5 +22,9 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
         }
     except HTTPException:
         raise
+    except RuntimeError as exc:
+        if str(exc) == SUPABASE_CONFIG_ERROR:
+            raise HTTPException(status_code=500, detail=SUPABASE_CONFIG_ERROR) from exc
+        raise HTTPException(status_code=401, detail="Could not verify your session.") from exc
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Could not verify your session.") from exc
