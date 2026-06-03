@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     supabase_url: str
     supabase_service_key: str
     frontend_url: str = "http://localhost:5173"
+    cors_origins: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8-sig", extra="ignore")
 
@@ -20,6 +21,12 @@ class Settings(BaseSettings):
         if value is None or not str(value).strip():
             return DEFAULT_OPENROUTER_MODEL
         return str(value).strip()
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        origins = ["http://localhost:5173", self.frontend_url]
+        origins.extend(origin.strip() for origin in self.cors_origins.split(",") if origin.strip())
+        return sorted({origin.rstrip("/") for origin in origins if origin.strip()})
 
 
 settings = Settings()

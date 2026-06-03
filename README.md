@@ -20,6 +20,7 @@ OPENROUTER_MODEL=mistralai/mistral-7b-instruct:free
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_KEY=your_supabase_secret_key_starts_with_sb_secret_or_legacy_service_role_jwt_starts_with_eyJ
 FRONTEND_URL=http://localhost:5173
+CORS_ORIGINS=http://localhost:5173
 ```
 
 `SUPABASE_SERVICE_KEY` must be Supabase's server-side secret key, usually starting with `sb_secret_`, or the legacy `service_role` JWT API key, usually starting with `eyJ`. Do not use the database password, JWT secret, anon key, or publishable key.
@@ -68,7 +69,10 @@ OPENROUTER_MODEL=mistralai/mistral-7b-instruct:free
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_KEY=your_supabase_secret_or_service_role_key
 FRONTEND_URL=your_deployed_memvora_ui_url
+CORS_ORIGINS=your_deployed_memvora_ui_url
 ```
+
+Use full URLs for CORS values, including `https://`. For example: `https://memvora-ui-production.up.railway.app`.
 
 ## Guest Sign In
 
