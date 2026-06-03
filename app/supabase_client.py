@@ -3,15 +3,17 @@ import json
 from urllib.parse import urlparse
 
 from supabase import create_client
+from supabase.lib.client_options import ClientOptions
 
 from app.config import settings
 
 
 SUPABASE_CONFIG_ERROR = (
     "Invalid Supabase configuration. Set SUPABASE_URL and SUPABASE_SERVICE_KEY "
-    "to real Supabase project values. SUPABASE_SERVICE_KEY must be the legacy "
-    "service_role JWT API key that starts with eyJ, not the JWT secret, anon key, "
-    "publishable key, or sb_secret key."
+    "to real Supabase project values. SUPABASE_SERVICE_KEY must be the Supabase "
+    "secret key that starts with sb_secret_ or the legacy service_role JWT API key "
+    "that starts with eyJ. Do not use the JWT secret, anon key, publishable key, "
+    "or database password."
 )
 
 
@@ -45,11 +47,15 @@ def validate_supabase_config() -> None:
         not service_key
         or service_key == "your_supabase_service_role_key"
         or service_key == "your_supabase_service_role_api_key"
+        or service_key == "your_supabase_secret_or_service_role_key"
+        or service_key == "your_supabase_secret_key_starts_with_sb_secret_or_legacy_service_role_jwt_starts_with_eyJ"
         or service_key.startswith("sb_publishable_")
         or service_key.startswith("sb_anon_")
-        or service_key.startswith("sb_secret_")
     ):
         raise RuntimeError(SUPABASE_CONFIG_ERROR)
+
+    if service_key.startswith("sb_secret_"):
+        return
 
     jwt_payload = _decode_jwt_payload(service_key)
     if jwt_payload is None:
@@ -61,6 +67,13 @@ def validate_supabase_config() -> None:
 
 validate_supabase_config()
 try:
-    supabase = create_client(settings.supabase_url, settings.supabase_service_key)
+    supabase = create_client(
+        settings.supabase_url,
+        settings.supabase_service_key,
+        options=ClientOptions(
+            auto_refresh_token=False,
+            persist_session=False,
+        ),
+    )
 except Exception as exc:
     raise RuntimeError(SUPABASE_CONFIG_ERROR) from exc
