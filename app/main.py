@@ -6,7 +6,7 @@ from app.config import settings
 from app.models import ChatRequest, ChatResponse, SearchResponse, SummaryRequest, SummaryResponse, UploadResponse
 from app.services.memories import build_context, create_memory, list_memories, search_memories
 from app.services.openrouter import ask_openrouter, summarize_memories
-from app.services.text_processing import extract_text_from_file, preview_text
+from app.services.text_processing import extract_text_from_file, extract_text_from_url, preview_text
 
 app = FastAPI(title="Memvora API", version="1.0.0")
 
@@ -41,6 +41,7 @@ async def get_memories(days: int | None = None, user: dict = Depends(get_current
 async def upload_memory(
     title: str = Form(default=""),
     note: str = Form(default=""),
+    link_url: str = Form(default=""),
     file: UploadFile | None = File(default=None),
     user: dict = Depends(get_current_user),
 ) -> UploadResponse:
@@ -51,9 +52,17 @@ async def upload_memory(
         if file and file.filename:
             file_text, source_type = await extract_text_from_file(file)
             content = file_text
+        elif link_url.strip():
+            link_text, link_title, domain = await extract_text_from_url(link_url)
+            source_type = "link"
+            content = link_text
+            if note.strip():
+                content = f"{content}\n\nUser note:\n{note.strip()}"
+            if not title.strip():
+                title = link_title or f"Saved link from {domain}"
 
         if not content:
-            raise HTTPException(status_code=400, detail="Add a note or upload a readable file.")
+            raise HTTPException(status_code=400, detail="Add a note, link, or upload a readable file.")
 
         final_title = title.strip() or (file.filename if file else preview_text(content, 60)) or "Untitled memory"
         result = create_memory(user["id"], final_title, content, source_type)

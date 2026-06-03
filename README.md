@@ -31,6 +31,7 @@ FRONTEND_URL=http://localhost:5173
 - `GET /memories` - list current user's recent memories
 - `GET /memories?days=7` - list memories from a recent time window
 - `POST /upload` - upload PDF/TXT/Markdown or pasted text
+- `POST /upload` - also accepts `link_url` to save readable web links
 - `GET /search?query=...` - semantic search over memories
 - `POST /chat` - ask a question using retrieved memory context
 - `POST /summary` - summarize recent memories and themes
