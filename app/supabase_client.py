@@ -3,7 +3,6 @@ import json
 from urllib.parse import urlparse
 
 from supabase import create_client
-from supabase.lib.client_options import ClientOptions
 
 from app.config import settings
 
@@ -71,10 +70,6 @@ def create_supabase_client():
         return create_client(
             settings.supabase_url,
             settings.supabase_service_key,
-            options=ClientOptions(
-                auto_refresh_token=False,
-                persist_session=False,
-            ),
         )
     except Exception as exc:
         raise RuntimeError(SUPABASE_CONFIG_ERROR) from exc
