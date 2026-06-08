@@ -1,9 +1,11 @@
 from datetime import UTC, datetime, timedelta
+from difflib import SequenceMatcher
+import re
 
 from fastapi import HTTPException
 from postgrest.exceptions import APIError
 
-from app.services.embeddings import create_embedding, create_embeddings
+from app.services.embeddings import create_embeddings
 from app.services.text_processing import chunk_text
 from app.supabase_client import supabase
 from app.config import settings
@@ -15,6 +17,9 @@ SUPABASE_SCHEMA_ERROR = (
 )
 SEARCH_CANDIDATE_MULTIPLIER = 4
 SEARCH_MIN_CANDIDATES = 12
+SEARCH_MAX_EFFECTIVE_THRESHOLD = 0.22
+SEARCH_FALLBACK_SIMILARITY_THRESHOLD = 0.10
+KEYWORD_FUZZY_MATCH_THRESHOLD = 0.78
 COUNTRY_QUERY_ALIASES = {
     "thai": "thailand",
     "indian": "india",
@@ -102,10 +107,11 @@ def create_memory(user_id: str, title: str, content: str, source_type: str, imag
     }
 
 
-def list_memories(user_id: str, days: int | None = None, limit: int = 20) -> list[dict]:
+def list_memories(user_id: str, days: int | None = None, limit: int = 20, include_content: bool = False) -> list[dict]:
+    selected_columns = "id,title,source_type,original_content,created_at" if include_content else "id,title,source_type,created_at"
     query = (
         supabase.table("memories")
-        .select("id,title,source_type,original_content,created_at,image_data_url")
+        .select(selected_columns)
         .eq("user_id", user_id)
     )
 
@@ -116,20 +122,43 @@ def list_memories(user_id: str, days: int | None = None, limit: int = 20) -> lis
     try:
         response = query.order("created_at", desc=True).limit(limit).execute()
     except APIError as exc:
-        if "image_data_url" not in str(exc):
-            handle_supabase_error(exc)
-        query = (
-            supabase.table("memories")
-            .select("id,title,source_type,original_content,created_at")
-            .eq("user_id", user_id)
-        )
-        if days:
-            query = query.gte("created_at", since.isoformat())
+        handle_supabase_error(exc)
+
+    if include_content:
+        return [{**memory, "image_data_url": None} for memory in response.data]
+
+    return [{**memory, "original_content": "", "image_data_url": None} for memory in response.data]
+
+
+def get_memory(user_id: str, memory_id: str) -> dict:
+    try:
         try:
-            response = query.order("created_at", desc=True).limit(limit).execute()
-        except APIError as retry_exc:
-            handle_supabase_error(retry_exc)
-    return response.data
+            response = (
+                supabase.table("memories")
+                .select("id,title,source_type,original_content,created_at,image_data_url")
+                .eq("id", memory_id)
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+        except APIError as exc:
+            if "image_data_url" not in str(exc):
+                raise
+            response = (
+                supabase.table("memories")
+                .select("id,title,source_type,original_content,created_at")
+                .eq("id", memory_id)
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+    except APIError as exc:
+        handle_supabase_error(exc)
+
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Memory not found.")
+
+    return response.data[0]
 
 
 def enforce_memory_quota(user_id: str) -> None:
@@ -229,8 +258,11 @@ def search_memories(user_id: str, query: str, limit: int = 5) -> list[dict]:
 
     candidate_limit = max(limit * SEARCH_CANDIDATE_MULTIPLIER, SEARCH_MIN_CANDIDATES)
     merged_results: dict[str, dict] = {}
-    for search_query in expand_search_query(clean_query):
-        embedding = create_embedding(search_query)
+    fallback_results: dict[str, dict] = {}
+    effective_threshold = min(settings.memory_similarity_threshold, SEARCH_MAX_EFFECTIVE_THRESHOLD)
+    search_queries = expand_search_query(clean_query)
+    embeddings = create_embeddings(search_queries)
+    for embedding in embeddings:
         response = supabase.rpc(
             "match_memory_chunks",
             {
@@ -246,19 +278,37 @@ def search_memories(user_id: str, query: str, limit: int = 5) -> list[dict]:
 
         for result in response.data:
             similarity = float(result.get("similarity") or 0)
-            if similarity < settings.memory_similarity_threshold:
+            if similarity < SEARCH_FALLBACK_SIMILARITY_THRESHOLD:
                 continue
 
             result_key = str(result.get("chunk_id") or result.get("memory_id"))
-            existing = merged_results.get(result_key)
+            target_results = merged_results if similarity >= effective_threshold else fallback_results
+            existing = target_results.get(result_key)
             if not existing or similarity > float(existing.get("similarity") or 0):
-                merged_results[result_key] = result
+                target_results[result_key] = result
 
     if len(merged_results) < limit:
         for result in keyword_memory_matches(user_id, clean_query, limit - len(merged_results)):
             result_key = str(result.get("chunk_id") or result.get("memory_id"))
             if result_key not in merged_results:
                 merged_results[result_key] = result
+
+    if len(merged_results) < limit:
+        fallback_items = sorted(
+            fallback_results.values(),
+            key=lambda result: float(result.get("similarity") or 0),
+            reverse=True,
+        )
+        for result in fallback_items:
+            result_key = str(result.get("chunk_id") or result.get("memory_id"))
+            if result_key not in merged_results:
+                merged_results[result_key] = result
+            if len(merged_results) >= limit:
+                break
+
+    if not merged_results:
+        for result in recent_memory_fallback(user_id, limit):
+            merged_results[str(result["memory_id"])] = result
 
     return sorted(
         merged_results.values(),
@@ -316,10 +366,11 @@ def keyword_memory_matches(user_id: str, query: str, limit: int) -> list[dict]:
     scored_matches = []
     for memory in response.data:
         searchable_text = f"{memory.get('title', '')} {memory.get('original_content', '')}".lower()
-        matched_terms = {term for term in terms if term in searchable_text}
+        searchable_words = set(re.findall(r"[a-z0-9]{4,}", searchable_text))
+        matched_terms = {term for term in terms if term in searchable_text or fuzzy_term_match(term, searchable_words)}
         if not matched_terms:
             continue
-        score = min(0.98, settings.memory_similarity_threshold + 0.03 + (0.03 * len(matched_terms)))
+        score = min(0.98, max(settings.memory_similarity_threshold, SEARCH_MAX_EFFECTIVE_THRESHOLD) + 0.03 + (0.03 * len(matched_terms)))
         content = memory.get("original_content", "")
         scored_matches.append(
             {
@@ -335,6 +386,35 @@ def keyword_memory_matches(user_id: str, query: str, limit: int) -> list[dict]:
     return sorted(scored_matches, key=lambda result: float(result["similarity"]), reverse=True)[:limit]
 
 
+def recent_memory_fallback(user_id: str, limit: int) -> list[dict]:
+    try:
+        response = (
+            supabase.table("memories")
+            .select("id,title,original_content,created_at")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+    except APIError as exc:
+        handle_supabase_error(exc)
+
+    results = []
+    for memory in response.data:
+        content = memory.get("original_content", "")
+        results.append(
+            {
+                "chunk_id": memory["id"],
+                "memory_id": memory["id"],
+                "title": memory.get("title") or "Untitled",
+                "content": content[:900],
+                "similarity": 0.01,
+                "created_at": memory.get("created_at"),
+            }
+        )
+    return results
+
+
 def expanded_keyword_terms(query: str) -> set[str]:
     terms = {word.strip(".,;:!?()[]{}\"'").lower() for word in query.split()}
     terms = {term for term in terms if len(term) >= 3}
@@ -344,6 +424,21 @@ def expanded_keyword_terms(query: str) -> set[str]:
         if alias:
             terms.add(alias)
     return terms
+
+
+def fuzzy_term_match(term: str, words: set[str]) -> bool:
+    if len(term) < 4:
+        return False
+    if not words:
+        return False
+
+    for word in words:
+        if abs(len(word) - len(term)) > 2:
+            continue
+        if SequenceMatcher(None, term, word).ratio() >= KEYWORD_FUZZY_MATCH_THRESHOLD:
+            return True
+
+    return False
 
 
 def build_context(chunks: list[dict]) -> str:

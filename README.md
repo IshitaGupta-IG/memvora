@@ -10,9 +10,10 @@ This service is built as a production-minded FastAPI API with Supabase Auth, Sup
 - Extract text and visual context from screenshots with Gemini OCR.
 - Preserve screenshot previews for later viewing when the Supabase `image_data_url` column is present.
 - Convert saved content into semantic chunks for vector search.
-- Ask grounded AI questions over only the user's relevant memories.
+- Ask grounded AI questions over the user's relevant memories through AI Chat.
 - Summarize recent memories into themes, details, open questions, and next actions.
-- Filter weak retrieval results with a similarity threshold so the AI does not hallucinate from poor matches.
+- Use forgiving retrieval with lower-threshold semantic matches, typo-tolerant keyword fallback, and recent-memory fallback when no strong match appears.
+- Serve lightweight memory lists and lazy-load full memory content/screenshots for faster dashboard responses.
 - Fall back across multiple Gemini and OpenRouter models to reduce free-tier rate-limit failures.
 - Support guest sessions through Supabase anonymous auth.
 - Edit and delete memories while keeping search chunks in sync.
@@ -45,10 +46,10 @@ This service is built as a production-minded FastAPI API with Supabase Auth, Sup
    - Memory length and chunk-count limits
 4. Text is chunked and embedded locally.
 5. The memory and its chunks are stored in Supabase.
-6. Search and chat generate an embedding for the user query.
+6. Chat/search generate embeddings for the user query and selected query variants.
 7. Supabase pgvector returns nearest chunks.
-8. The backend filters by `MEMORY_SIMILARITY_THRESHOLD`.
-9. Only relevant memory context is sent to Gemini/OpenRouter for grounded answers.
+8. The backend merges semantic results with fuzzy keyword and recent-memory fallbacks.
+9. Relevant or closest-available memory context is sent to Gemini/OpenRouter for grounded answers.
 
 ## Security And Privacy
 
@@ -71,13 +72,14 @@ Memvora treats user memory as sensitive data.
 | --- | --- |
 | `GET /health` | Health check. |
 | `GET /me` | Return the current authenticated or guest user. |
-| `GET /memories` | List the user's recent memories. |
-| `GET /memories?days=7` | List memories from a time window. |
+| `GET /memories` | List lightweight recent memory metadata for fast dashboard loads. |
+| `GET /memories?days=7` | List lightweight memory metadata from a time window. |
+| `GET /memories/{memory_id}` | Fetch full content and screenshot preview for one memory. |
 | `POST /upload` | Save notes, files, screenshots, and public links. |
 | `PUT /memories/{memory_id}` | Edit a memory and rebuild its chunks. |
 | `DELETE /memories/{memory_id}` | Delete a memory and its chunks. |
-| `GET /search?query=...` | Semantic memory search. |
-| `POST /chat` | Grounded chat over relevant memories. |
+| `GET /search?query=...` | API-level semantic memory search. The UI now uses AI Chat as the primary retrieval surface. |
+| `POST /chat` | Grounded chat over relevant or closest-available memories. |
 | `POST /summary` | AI summary of recent memories. |
 
 All routes except `/health` require:
@@ -115,7 +117,7 @@ GEMINI_MODEL=gemini-3.1-flash-lite
 GEMINI_MODELS=gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-2.5-flash
 AI_PROVIDER_ORDER=gemini,openrouter
 
-MEMORY_SIMILARITY_THRESHOLD=0.35
+MEMORY_SIMILARITY_THRESHOLD=0.20
 MAX_REQUEST_BYTES=8388608
 MAX_UPLOAD_BYTES=5242880
 MAX_IMAGE_BYTES=3145728
@@ -143,6 +145,7 @@ Notes:
 - `SUPABASE_SERVICE_KEY` must be a server-side Supabase secret key or legacy service-role JWT. Do not use the anon key, publishable key, database password, or JWT secret.
 - `GEMINI_MODELS` and `OPENROUTER_MODELS` are comma-separated fallback lists. Memvora tries up to three models per provider.
 - `AI_PROVIDER_ORDER=gemini,openrouter` means Gemini is tried first, then OpenRouter.
+- `MEMORY_SIMILARITY_THRESHOLD=0.20` is recommended for forgiving retrieval. The backend also clamps overly strict values for chat/search so spelling mistakes and weaker semantic matches still have a chance.
 - `MAX_SCREENSHOT_STORAGE_BYTES` controls which screenshots get saved as previews. Larger screenshots still save OCR text, but not image previews.
 - `CORS_ORIGINS` must exactly match deployed frontend origins, including `https://`.
 
@@ -189,7 +192,10 @@ Deployment checklist:
 
 - If Supabase email rate limits block signup, the frontend can offer guest session fallback.
 - If Gemini OCR is rate-limited, screenshot memories still save with fallback text.
-- If no retrieved chunk passes the similarity threshold, chat tells the user that no relevant memory was found.
+- The embedding model is warmed on startup. Startup may take a little longer, but the first search/chat/upload request should avoid the cold model-load penalty.
+- Memory list responses intentionally omit full text and screenshot data. Use `GET /memories/{memory_id}` for full memory detail.
+- Larger API responses are gzip-compressed when the client supports it.
+- Chat uses closest-available memory context instead of immediately failing when semantic matches are weak.
 - The current rate limiter is process-local. For heavy production traffic, move rate limiting to Redis, a gateway, or Supabase-backed counters.
 
 ## Repository
