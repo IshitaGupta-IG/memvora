@@ -70,8 +70,9 @@ async def upload_memory(
             raise HTTPException(status_code=400, detail="Titles are limited to 200 characters.")
 
         if file and file.filename:
-            file_text, source_type = await extract_text_from_file(file)
-            content = file_text
+            extraction = await extract_text_from_file(file)
+            source_type = extraction.source_type
+            content = extraction.text
         elif link_url.strip():
             if len(link_url) > 2000:
                 raise HTTPException(status_code=400, detail="Links are limited to 2000 characters.")
@@ -89,7 +90,13 @@ async def upload_memory(
             raise HTTPException(status_code=400, detail=f"Memories are limited to {settings.max_memory_chars} characters after extraction.")
 
         final_title = title.strip() or (file.filename if file else preview_text(content, 60)) or "Untitled memory"
-        result = create_memory(user["id"], final_title, content, source_type)
+        result = create_memory(
+            user["id"],
+            final_title,
+            content,
+            source_type,
+            image_data_url=extraction.image_data_url if file and file.filename else None,
+        )
 
         return UploadResponse(
             memory_id=result["memory"]["id"],

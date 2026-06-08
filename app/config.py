@@ -11,6 +11,7 @@ DEFAULT_MEMORY_SIMILARITY_THRESHOLD = 0.35
 DEFAULT_MAX_REQUEST_BYTES = 8 * 1024 * 1024
 DEFAULT_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 DEFAULT_MAX_IMAGE_BYTES = 3 * 1024 * 1024
+DEFAULT_MAX_SCREENSHOT_STORAGE_BYTES = 2 * 1024 * 1024
 DEFAULT_MAX_URL_BYTES = 1024 * 1024
 DEFAULT_MAX_MEMORY_CHARS = 100_000
 DEFAULT_MAX_CHUNKS_PER_MEMORY = 80
@@ -33,6 +34,7 @@ class Settings(BaseSettings):
     max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
     max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES
+    max_screenshot_storage_bytes: int = DEFAULT_MAX_SCREENSHOT_STORAGE_BYTES
     max_url_bytes: int = DEFAULT_MAX_URL_BYTES
     max_memory_chars: int = DEFAULT_MAX_MEMORY_CHARS
     max_chunks_per_memory: int = DEFAULT_MAX_CHUNKS_PER_MEMORY
@@ -94,6 +96,7 @@ class Settings(BaseSettings):
         "max_request_bytes",
         "max_upload_bytes",
         "max_image_bytes",
+        "max_screenshot_storage_bytes",
         "max_url_bytes",
         "max_memory_chars",
         "max_chunks_per_memory",

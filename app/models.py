@@ -22,6 +22,7 @@ class MemoryResponse(BaseModel):
     source_type: str
     original_content: str
     created_at: str
+    image_data_url: str | None = None
 
 
 class MemoryUpdateRequest(BaseModel):

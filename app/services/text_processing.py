@@ -1,5 +1,6 @@
 import asyncio
 import base64
+from dataclasses import dataclass
 import ipaddress
 from io import BytesIO
 import socket
@@ -23,7 +24,14 @@ ALLOWED_URL_PORTS = {80, 443}
 MAX_URL_REDIRECTS = 3
 
 
-async def extract_text_from_file(file: UploadFile) -> tuple[str, str]:
+@dataclass(frozen=True)
+class FileExtraction:
+    text: str
+    source_type: str
+    image_data_url: str | None = None
+
+
+async def extract_text_from_file(file: UploadFile) -> FileExtraction:
     filename = file.filename or "Untitled upload"
     content = await read_limited_upload(file, settings.max_upload_bytes)
     content_type = file.content_type or ""
@@ -35,15 +43,21 @@ async def extract_text_from_file(file: UploadFile) -> tuple[str, str]:
         if len(reader.pages) > settings.max_pdf_pages:
             raise ValueError(f"PDF uploads are limited to {settings.max_pdf_pages} pages.")
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
-        return text.strip(), "pdf"
+        return FileExtraction(text.strip(), "pdf")
 
     if filename.lower().endswith((".txt", ".md", ".markdown")) or content_type.startswith("text/"):
-        return content.decode("utf-8", errors="ignore").strip(), "text"
+        return FileExtraction(content.decode("utf-8", errors="ignore").strip(), "text")
 
     if filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")) or content_type in SUPPORTED_IMAGE_TYPES:
         if len(content) > settings.max_image_bytes:
             raise ValueError(f"Image uploads are limited to {settings.max_image_bytes // (1024 * 1024)} MB.")
-        return await extract_text_from_image(content, content_type or guess_image_content_type(filename), filename), "screenshot"
+        normalized_content_type = content_type if content_type in SUPPORTED_IMAGE_TYPES else guess_image_content_type(filename)
+        image_data_url = build_image_data_url(content, normalized_content_type)
+        return FileExtraction(
+            await extract_text_from_image(content, normalized_content_type, filename),
+            "screenshot",
+            image_data_url,
+        )
 
     raise ValueError("Please upload a PDF, TXT, Markdown, PNG, JPG, or WebP file.")
 
@@ -64,6 +78,15 @@ def guess_image_content_type(filename: str) -> str:
     if lower_filename.endswith(".webp"):
         return "image/webp"
     return "image/png"
+
+
+def build_image_data_url(content: bytes, content_type: str) -> str | None:
+    if len(content) > settings.max_screenshot_storage_bytes:
+        return None
+    if content_type not in SUPPORTED_IMAGE_TYPES:
+        return None
+    encoded = base64.b64encode(content).decode("ascii")
+    return f"data:{content_type};base64,{encoded}"
 
 
 def extract_gemini_text(data: dict) -> str:

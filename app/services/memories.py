@@ -19,10 +19,15 @@ def handle_supabase_error(exc: APIError) -> None:
     message = str(exc)
     if "public.memories" in message or "public.memory_chunks" in message or "match_memory_chunks" in message:
         raise HTTPException(status_code=503, detail=SUPABASE_SCHEMA_ERROR) from exc
+    if "image_data_url" in message:
+        raise HTTPException(
+            status_code=503,
+            detail="Memvora database needs the latest screenshot migration. Run setup_supabase.sql in Supabase SQL Editor.",
+        ) from exc
     raise HTTPException(status_code=502, detail="Supabase request failed. Check backend logs and Supabase configuration.") from exc
 
 
-def create_memory(user_id: str, title: str, content: str, source_type: str) -> dict:
+def create_memory(user_id: str, title: str, content: str, source_type: str, image_data_url: str | None = None) -> dict:
     chunks = chunk_text(content)
     if not chunks:
         raise HTTPException(status_code=400, detail="No readable text was found.")
@@ -31,19 +36,24 @@ def create_memory(user_id: str, title: str, content: str, source_type: str) -> d
     embeddings = create_embeddings(chunks)
     chunk_rows = []
     memory = None
+    memory_payload = {
+        "user_id": user_id,
+        "title": title,
+        "source_type": source_type,
+        "original_content": content,
+    }
+    if image_data_url:
+        memory_payload["image_data_url"] = image_data_url
+
     try:
-        memory_response = (
-            supabase.table("memories")
-            .insert(
-                {
-                    "user_id": user_id,
-                    "title": title,
-                    "source_type": source_type,
-                    "original_content": content,
-                }
-            )
-            .execute()
-        )
+        try:
+            memory_response = supabase.table("memories").insert(memory_payload).execute()
+        except APIError as exc:
+            if image_data_url and "image_data_url" in str(exc):
+                memory_payload.pop("image_data_url", None)
+                memory_response = supabase.table("memories").insert(memory_payload).execute()
+            else:
+                raise
 
         memory = memory_response.data[0]
         chunk_rows = [
@@ -75,7 +85,7 @@ def create_memory(user_id: str, title: str, content: str, source_type: str) -> d
 def list_memories(user_id: str, days: int | None = None, limit: int = 20) -> list[dict]:
     query = (
         supabase.table("memories")
-        .select("id,title,source_type,original_content,created_at")
+        .select("id,title,source_type,original_content,created_at,image_data_url")
         .eq("user_id", user_id)
     )
 
@@ -86,7 +96,19 @@ def list_memories(user_id: str, days: int | None = None, limit: int = 20) -> lis
     try:
         response = query.order("created_at", desc=True).limit(limit).execute()
     except APIError as exc:
-        handle_supabase_error(exc)
+        if "image_data_url" not in str(exc):
+            handle_supabase_error(exc)
+        query = (
+            supabase.table("memories")
+            .select("id,title,source_type,original_content,created_at")
+            .eq("user_id", user_id)
+        )
+        if days:
+            query = query.gte("created_at", since.isoformat())
+        try:
+            response = query.order("created_at", desc=True).limit(limit).execute()
+        except APIError as retry_exc:
+            handle_supabase_error(retry_exc)
     return response.data
 
 
