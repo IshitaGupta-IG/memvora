@@ -7,6 +7,7 @@ DEFAULT_OPENROUTER_MODELS = "openrouter/free,mistralai/mistral-7b-instruct:free,
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 DEFAULT_GEMINI_MODELS = "gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-2.5-flash"
 DEFAULT_AI_PROVIDER_ORDER = "gemini,openrouter"
+DEFAULT_MEMORY_SIMILARITY_THRESHOLD = 0.35
 
 
 class Settings(BaseSettings):
@@ -17,6 +18,7 @@ class Settings(BaseSettings):
     gemini_model: str = DEFAULT_GEMINI_MODEL
     gemini_models: str = DEFAULT_GEMINI_MODELS
     ai_provider_order: str = DEFAULT_AI_PROVIDER_ORDER
+    memory_similarity_threshold: float = DEFAULT_MEMORY_SIMILARITY_THRESHOLD
     supabase_url: str
     supabase_service_key: str
     frontend_url: str = "http://localhost:5173"
@@ -58,6 +60,13 @@ class Settings(BaseSettings):
         if value is None or not str(value).strip():
             return DEFAULT_AI_PROVIDER_ORDER
         return str(value).strip()
+
+    @field_validator("memory_similarity_threshold", mode="before")
+    @classmethod
+    def default_memory_similarity_threshold(cls, value: float | str | None) -> float:
+        if value is None or not str(value).strip():
+            return DEFAULT_MEMORY_SIMILARITY_THRESHOLD
+        return float(value)
 
     @property
     def ai_providers(self) -> list[str]:

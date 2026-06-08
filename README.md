@@ -22,6 +22,7 @@ GEMINI_API_KEY=your_google_ai_studio_api_key
 GEMINI_MODEL=gemini-3.1-flash-lite
 GEMINI_MODELS=gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-2.5-flash
 AI_PROVIDER_ORDER=gemini,openrouter
+MEMORY_SIMILARITY_THRESHOLD=0.35
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_KEY=your_supabase_secret_key_starts_with_sb_secret_or_legacy_service_role_jwt_starts_with_eyJ
 FRONTEND_URL=http://localhost:5173
@@ -35,6 +36,8 @@ CORS_ORIGINS=http://localhost:5173
 `GEMINI_API_KEY` is optional but recommended. When Gemini models are rate-limited or unavailable, Memvora automatically falls back to OpenRouter if configured. If `OPENROUTER_API_KEY` is blank and `GEMINI_API_KEY` is set, Memvora uses Gemini only.
 
 `AI_PROVIDER_ORDER` controls provider priority. The default is `gemini,openrouter`, which uses Gemini first and falls back to OpenRouter.
+
+`MEMORY_SIMILARITY_THRESHOLD` filters weak semantic matches before they reach search or grounded chat. Raise it for stricter answers, lower it if search misses relevant memories.
 
 ## API Routes
 
@@ -81,6 +84,7 @@ GEMINI_API_KEY=your_google_ai_studio_api_key
 GEMINI_MODEL=gemini-3.1-flash-lite
 GEMINI_MODELS=gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-2.5-flash
 AI_PROVIDER_ORDER=gemini,openrouter
+MEMORY_SIMILARITY_THRESHOLD=0.35
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_KEY=your_supabase_secret_or_service_role_key
 FRONTEND_URL=your_deployed_memvora_ui_url

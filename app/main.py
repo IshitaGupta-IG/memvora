@@ -102,6 +102,11 @@ async def search(query: str, user: dict = Depends(get_current_user)) -> SearchRe
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, user: dict = Depends(get_current_user)) -> ChatResponse:
     chunks = search_memories(user["id"], request.message, limit=6)
+    if not chunks:
+        return ChatResponse(
+            answer="I could not find anything relevant in your memories for that question yet. Try saving more context or asking in a different way.",
+            sources=[],
+        )
     context = build_context(chunks)
     answer = await ask_openrouter(request.message, context)
     return ChatResponse(answer=answer, sources=chunks)

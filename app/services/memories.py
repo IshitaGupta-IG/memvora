@@ -6,6 +6,7 @@ from postgrest.exceptions import APIError
 from app.services.embeddings import create_embedding, create_embeddings
 from app.services.text_processing import chunk_text
 from app.supabase_client import supabase
+from app.config import settings
 
 SUPABASE_SCHEMA_ERROR = (
     "Memvora database tables are missing. In Supabase, open SQL Editor and run "
@@ -26,6 +27,9 @@ def create_memory(user_id: str, title: str, content: str, source_type: str) -> d
     if not chunks:
         raise HTTPException(status_code=400, detail="No readable text was found.")
 
+    embeddings = create_embeddings(chunks)
+    chunk_rows = []
+    memory = None
     try:
         memory_response = (
             supabase.table("memories")
@@ -41,8 +45,6 @@ def create_memory(user_id: str, title: str, content: str, source_type: str) -> d
         )
 
         memory = memory_response.data[0]
-        embeddings = create_embeddings(chunks)
-
         chunk_rows = [
             {
                 "memory_id": memory["id"],
@@ -56,6 +58,11 @@ def create_memory(user_id: str, title: str, content: str, source_type: str) -> d
 
         supabase.table("memory_chunks").insert(chunk_rows).execute()
     except APIError as exc:
+        if memory:
+            try:
+                supabase.table("memories").delete().eq("id", memory["id"]).eq("user_id", user_id).execute()
+            except APIError:
+                pass
         handle_supabase_error(exc)
 
     return {
@@ -87,32 +94,42 @@ def update_memory(user_id: str, memory_id: str, title: str, content: str) -> dic
     if not chunks:
         raise HTTPException(status_code=400, detail="No readable text was found.")
 
+    embeddings = create_embeddings(chunks)
+    chunk_rows = [
+        {
+            "memory_id": memory_id,
+            "user_id": user_id,
+            "content": chunk,
+            "chunk_index": index,
+            "embedding": embedding,
+        }
+        for index, (chunk, embedding) in enumerate(zip(chunks, embeddings))
+    ]
+
     try:
-        existing = supabase.table("memories").select("id").eq("id", memory_id).eq("user_id", user_id).limit(1).execute()
+        existing = supabase.table("memories").select("id,title,original_content").eq("id", memory_id).eq("user_id", user_id).limit(1).execute()
         if not existing.data:
             raise HTTPException(status_code=404, detail="Memory not found.")
 
-        memory_response = (
-            supabase.table("memories")
-            .update({"title": title, "original_content": content})
-            .eq("id", memory_id)
-            .eq("user_id", user_id)
-            .execute()
-        )
+        old_memory = existing.data[0]
 
         supabase.table("memory_chunks").delete().eq("memory_id", memory_id).eq("user_id", user_id).execute()
-        embeddings = create_embeddings(chunks)
-        chunk_rows = [
-            {
-                "memory_id": memory_id,
-                "user_id": user_id,
-                "content": chunk,
-                "chunk_index": index,
-                "embedding": embedding,
-            }
-            for index, (chunk, embedding) in enumerate(zip(chunks, embeddings))
-        ]
-        supabase.table("memory_chunks").insert(chunk_rows).execute()
+        try:
+            supabase.table("memory_chunks").insert(chunk_rows).execute()
+            memory_response = (
+                supabase.table("memories")
+                .update({"title": title, "original_content": content})
+                .eq("id", memory_id)
+                .eq("user_id", user_id)
+                .execute()
+            )
+        except APIError:
+            try:
+                supabase.table("memory_chunks").delete().eq("memory_id", memory_id).eq("user_id", user_id).execute()
+            except APIError:
+                pass
+            restore_memory_chunks(user_id, memory_id, old_memory.get("original_content") or "")
+            raise
     except APIError as exc:
         handle_supabase_error(exc)
 
@@ -133,6 +150,25 @@ def delete_memory(user_id: str, memory_id: str) -> None:
         handle_supabase_error(exc)
 
 
+def restore_memory_chunks(user_id: str, memory_id: str, content: str) -> None:
+    chunks = chunk_text(content)
+    if not chunks:
+        return
+
+    embeddings = create_embeddings(chunks)
+    chunk_rows = [
+        {
+            "memory_id": memory_id,
+            "user_id": user_id,
+            "content": chunk,
+            "chunk_index": index,
+            "embedding": embedding,
+        }
+        for index, (chunk, embedding) in enumerate(zip(chunks, embeddings))
+    ]
+    supabase.table("memory_chunks").insert(chunk_rows).execute()
+
+
 def search_memories(user_id: str, query: str, limit: int = 5) -> list[dict]:
     if not query.strip():
         raise HTTPException(status_code=400, detail="Search query cannot be empty.")
@@ -150,7 +186,11 @@ def search_memories(user_id: str, query: str, limit: int = 5) -> list[dict]:
         response = response.execute()
     except APIError as exc:
         handle_supabase_error(exc)
-    return response.data
+    return [
+        result
+        for result in response.data
+        if float(result.get("similarity") or 0) >= settings.memory_similarity_threshold
+    ]
 
 
 def build_context(chunks: list[dict]) -> str:
