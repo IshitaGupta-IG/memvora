@@ -1,6 +1,7 @@
 import asyncio
 import base64
 from dataclasses import dataclass
+from html.parser import HTMLParser
 import ipaddress
 from io import BytesIO
 import socket
@@ -22,6 +23,7 @@ GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{
 IMAGE_OCR_TIMEOUT_SECONDS = 10
 ALLOWED_URL_PORTS = {80, 443}
 MAX_URL_REDIRECTS = 3
+IGNORED_HTML_TAGS = {"script", "style", "nav", "footer", "header", "noscript", "svg"}
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,46 @@ class FileExtraction:
     text: str
     source_type: str
     image_data_url: str | None = None
+
+
+class ReadableHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.title_parts: list[str] = []
+        self.text_parts: list[str] = []
+        self._ignored_depth = 0
+        self._in_title = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag_name = tag.lower()
+        if tag_name in IGNORED_HTML_TAGS:
+            self._ignored_depth += 1
+        if tag_name == "title":
+            self._in_title = True
+
+    def handle_endtag(self, tag: str) -> None:
+        tag_name = tag.lower()
+        if tag_name in IGNORED_HTML_TAGS and self._ignored_depth:
+            self._ignored_depth -= 1
+        if tag_name == "title":
+            self._in_title = False
+
+    def handle_data(self, data: str) -> None:
+        text = " ".join(data.split())
+        if not text:
+            return
+        if self._in_title:
+            self.title_parts.append(text)
+        if not self._ignored_depth and not self._in_title:
+            self.text_parts.append(text)
+
+    @property
+    def title(self) -> str:
+        return " ".join(self.title_parts).strip()
+
+    @property
+    def readable_text(self) -> str:
+        return " ".join(self.text_parts).strip()
 
 
 async def extract_text_from_file(file: UploadFile) -> FileExtraction:
@@ -174,7 +216,10 @@ async def extract_text_from_image(content: bytes, content_type: str, filename: s
 async def extract_text_from_url(url: str) -> tuple[str, str, str]:
     normalized_url = await validate_public_url(url.strip())
     headers = {
-        "User-Agent": "MemvoraBot/1.0 (+https://memvora.app)",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0 Safari/537.36 Memvora/1.0"
+        ),
         "Accept": "text/html,text/plain,application/xhtml+xml",
     }
     parsed_url = urlparse(normalized_url)
@@ -211,30 +256,44 @@ async def extract_text_from_url(url: str) -> tuple[str, str, str]:
         text = response.text
     else:
         try:
-            from bs4 import BeautifulSoup
-
-            soup = BeautifulSoup(response.text, "html.parser")
-            for element in soup(["script", "style", "nav", "footer", "header", "noscript", "svg"]):
-                element.decompose()
-
-            title = (soup.title.string or "").strip() if soup.title else ""
-            title = title or f"Saved link from {domain}"
-
-            main_content = soup.find("article") or soup.find("main") or soup.body or soup
-            text = " ".join(main_content.get_text(" ").split())
+            title, text = parse_html_content(response.text, domain)
         except Exception:
             return fallback_link_memory("Memvora saved the link but could not parse the page content.")
 
     if not text:
         text = "No readable page text was found. Add a pasted excerpt or note with this link."
 
+    if response.extensions.get("memvora_truncated"):
+        text = f"{text}\n\n[Memvora read the first {settings.max_url_bytes // 1024} KB of this page to keep link ingestion fast and safe.]"
+
     memory_text = f"Source URL: {response.url}\nSource domain: {domain}\n\n{text}"
     return memory_text.strip(), title, domain
 
 
+def parse_html_content(html: str, domain: str) -> tuple[str, str]:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        parser = ReadableHTMLParser()
+        parser.feed(html)
+        title = parser.title or f"Saved link from {domain}"
+        return title, parser.readable_text
+
+    soup = BeautifulSoup(html, "html.parser")
+    for element in soup(list(IGNORED_HTML_TAGS)):
+        element.decompose()
+
+    title = (soup.title.string or "").strip() if soup.title else ""
+    title = title or f"Saved link from {domain}"
+
+    main_content = soup.find("article") or soup.find("main") or soup.body or soup
+    text = " ".join(main_content.get_text(" ").split())
+    return title, text
+
+
 async def fetch_public_url(url: str, headers: dict[str, str]) -> httpx.Response:
     current_url = url
-    async with httpx.AsyncClient(timeout=20, follow_redirects=False, headers=headers) as client:
+    async with httpx.AsyncClient(timeout=20, follow_redirects=False, headers=headers, trust_env=False) as client:
         for _ in range(MAX_URL_REDIRECTS + 1):
             await validate_public_url(current_url)
             async with client.stream("GET", current_url) as response:
@@ -247,17 +306,28 @@ async def fetch_public_url(url: str, headers: dict[str, str]) -> httpx.Response:
 
                 response.raise_for_status()
                 body = bytearray()
+                truncated = False
                 async for chunk in response.aiter_bytes():
-                    body.extend(chunk)
-                    if len(body) > settings.max_url_bytes:
-                        raise ValueError(f"Fetched pages are limited to {settings.max_url_bytes // 1024} KB.")
+                    remaining = settings.max_url_bytes - len(body)
+                    if remaining <= 0:
+                        truncated = True
+                        break
+                    body.extend(chunk[:remaining])
+                    if len(chunk) > remaining:
+                        truncated = True
+                        break
+
+                decoded_headers = dict(response.headers)
+                decoded_headers.pop("content-encoding", None)
+                decoded_headers.pop("content-length", None)
+                decoded_headers.pop("transfer-encoding", None)
 
                 return httpx.Response(
                     status_code=response.status_code,
-                    headers=response.headers,
+                    headers=decoded_headers,
                     content=bytes(body),
                     request=response.request,
-                    extensions=response.extensions,
+                    extensions={**response.extensions, "memvora_truncated": truncated},
                 )
 
     raise ValueError("This link redirects too many times.")
