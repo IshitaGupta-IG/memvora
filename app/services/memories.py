@@ -13,6 +13,20 @@ SUPABASE_SCHEMA_ERROR = (
     "the full setup_supabase.sql file from the Memvora project root. Make sure "
     "you are running it in the same Supabase project used by SUPABASE_URL."
 )
+SEARCH_CANDIDATE_MULTIPLIER = 4
+SEARCH_MIN_CANDIDATES = 12
+COUNTRY_QUERY_ALIASES = {
+    "thai": "thailand",
+    "indian": "india",
+    "american": "america",
+    "british": "britain",
+    "french": "france",
+    "german": "germany",
+    "japanese": "japan",
+    "chinese": "china",
+    "korean": "korea",
+    "italian": "italy",
+}
 
 
 def handle_supabase_error(exc: APIError) -> None:
@@ -203,27 +217,60 @@ def restore_memory_chunks(user_id: str, memory_id: str, content: str) -> None:
 
 
 def search_memories(user_id: str, query: str, limit: int = 5) -> list[dict]:
-    if not query.strip():
+    clean_query = query.strip()
+    if not clean_query:
         raise HTTPException(status_code=400, detail="Search query cannot be empty.")
 
-    embedding = create_embedding(query)
-    response = supabase.rpc(
-        "match_memory_chunks",
-        {
-            "query_embedding": embedding,
-            "match_user_id": user_id,
-            "match_count": limit,
-        },
-    )
-    try:
-        response = response.execute()
-    except APIError as exc:
-        handle_supabase_error(exc)
-    return [
-        result
-        for result in response.data
-        if float(result.get("similarity") or 0) >= settings.memory_similarity_threshold
-    ]
+    candidate_limit = max(limit * SEARCH_CANDIDATE_MULTIPLIER, SEARCH_MIN_CANDIDATES)
+    merged_results: dict[str, dict] = {}
+    for search_query in expand_search_query(clean_query):
+        embedding = create_embedding(search_query)
+        response = supabase.rpc(
+            "match_memory_chunks",
+            {
+                "query_embedding": embedding,
+                "match_user_id": user_id,
+                "match_count": candidate_limit,
+            },
+        )
+        try:
+            response = response.execute()
+        except APIError as exc:
+            handle_supabase_error(exc)
+
+        for result in response.data:
+            similarity = float(result.get("similarity") or 0)
+            if similarity < settings.memory_similarity_threshold:
+                continue
+
+            result_key = str(result.get("chunk_id") or result.get("memory_id"))
+            existing = merged_results.get(result_key)
+            if not existing or similarity > float(existing.get("similarity") or 0):
+                merged_results[result_key] = result
+
+    return sorted(
+        merged_results.values(),
+        key=lambda result: float(result.get("similarity") or 0),
+        reverse=True,
+    )[:limit]
+
+
+def expand_search_query(query: str) -> list[str]:
+    variants = [query]
+    words = query.split()
+    lowered_words = [word.strip(".,;:!?()[]{}\"'").lower() for word in words]
+
+    for index, word in enumerate(lowered_words):
+        alias = COUNTRY_QUERY_ALIASES.get(word)
+        if not alias:
+            continue
+        next_words = words.copy()
+        next_words[index] = alias
+        expanded_query = " ".join(next_words)
+        if expanded_query not in variants:
+            variants.append(expanded_query)
+
+    return variants[:3]
 
 
 def build_context(chunks: list[dict]) -> str:
