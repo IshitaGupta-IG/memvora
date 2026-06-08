@@ -23,6 +23,17 @@ GEMINI_MODEL=gemini-3.1-flash-lite
 GEMINI_MODELS=gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-2.5-flash
 AI_PROVIDER_ORDER=gemini,openrouter
 MEMORY_SIMILARITY_THRESHOLD=0.35
+MAX_REQUEST_BYTES=8388608
+MAX_UPLOAD_BYTES=5242880
+MAX_IMAGE_BYTES=3145728
+MAX_URL_BYTES=1048576
+MAX_MEMORY_CHARS=100000
+MAX_CHUNKS_PER_MEMORY=80
+MAX_PDF_PAGES=25
+MAX_USER_MEMORIES=500
+UPLOADS_PER_HOUR=60
+AI_EXTERNAL_PROCESSING_ENABLED=true
+AI_IMAGE_PROCESSING_ENABLED=true
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_KEY=your_supabase_secret_key_starts_with_sb_secret_or_legacy_service_role_jwt_starts_with_eyJ
 FRONTEND_URL=http://localhost:5173
@@ -38,6 +49,16 @@ CORS_ORIGINS=http://localhost:5173
 `AI_PROVIDER_ORDER` controls provider priority. The default is `gemini,openrouter`, which uses Gemini first and falls back to OpenRouter.
 
 `MEMORY_SIMILARITY_THRESHOLD` filters weak semantic matches before they reach search or grounded chat. Raise it for stricter answers, lower it if search misses relevant memories.
+
+Security and safety limits:
+
+- `MAX_REQUEST_BYTES` rejects oversized HTTP requests early.
+- `MAX_UPLOAD_BYTES`, `MAX_IMAGE_BYTES`, `MAX_URL_BYTES`, and `MAX_PDF_PAGES` bound extraction work.
+- `MAX_MEMORY_CHARS` and `MAX_CHUNKS_PER_MEMORY` prevent very large memories from slowing search and embeddings.
+- `MAX_USER_MEMORIES` and `UPLOADS_PER_HOUR` apply simple per-user quotas.
+- `AI_EXTERNAL_PROCESSING_ENABLED=false` disables chat/summary calls to external AI providers.
+- `AI_IMAGE_PROCESSING_ENABLED=false` saves screenshots without sending images to Gemini OCR.
+- Link ingestion blocks private, localhost, loopback, link-local, and non-standard-port URLs before fetches and redirects.
 
 ## API Routes
 
@@ -85,6 +106,17 @@ GEMINI_MODEL=gemini-3.1-flash-lite
 GEMINI_MODELS=gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-2.5-flash
 AI_PROVIDER_ORDER=gemini,openrouter
 MEMORY_SIMILARITY_THRESHOLD=0.35
+MAX_REQUEST_BYTES=8388608
+MAX_UPLOAD_BYTES=5242880
+MAX_IMAGE_BYTES=3145728
+MAX_URL_BYTES=1048576
+MAX_MEMORY_CHARS=100000
+MAX_CHUNKS_PER_MEMORY=80
+MAX_PDF_PAGES=25
+MAX_USER_MEMORIES=500
+UPLOADS_PER_HOUR=60
+AI_EXTERNAL_PROCESSING_ENABLED=true
+AI_IMAGE_PROCESSING_ENABLED=true
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_KEY=your_supabase_secret_or_service_role_key
 FRONTEND_URL=your_deployed_memvora_ui_url

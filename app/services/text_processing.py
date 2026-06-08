@@ -1,6 +1,9 @@
+import asyncio
 import base64
+import ipaddress
 from io import BytesIO
-from urllib.parse import urlparse
+import socket
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from fastapi import UploadFile
@@ -16,17 +19,21 @@ SUPPORTED_FILE_TYPES = {
 SUPPORTED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
 GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 IMAGE_OCR_TIMEOUT_SECONDS = 10
+ALLOWED_URL_PORTS = {80, 443}
+MAX_URL_REDIRECTS = 3
 
 
 async def extract_text_from_file(file: UploadFile) -> tuple[str, str]:
     filename = file.filename or "Untitled upload"
-    content = await file.read()
+    content = await read_limited_upload(file, settings.max_upload_bytes)
     content_type = file.content_type or ""
 
     if filename.lower().endswith(".pdf") or content_type == "application/pdf":
         from pypdf import PdfReader
 
         reader = PdfReader(BytesIO(content))
+        if len(reader.pages) > settings.max_pdf_pages:
+            raise ValueError(f"PDF uploads are limited to {settings.max_pdf_pages} pages.")
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
         return text.strip(), "pdf"
 
@@ -34,9 +41,18 @@ async def extract_text_from_file(file: UploadFile) -> tuple[str, str]:
         return content.decode("utf-8", errors="ignore").strip(), "text"
 
     if filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")) or content_type in SUPPORTED_IMAGE_TYPES:
+        if len(content) > settings.max_image_bytes:
+            raise ValueError(f"Image uploads are limited to {settings.max_image_bytes // (1024 * 1024)} MB.")
         return await extract_text_from_image(content, content_type or guess_image_content_type(filename), filename), "screenshot"
 
     raise ValueError("Please upload a PDF, TXT, Markdown, PNG, JPG, or WebP file.")
+
+
+async def read_limited_upload(file: UploadFile, max_bytes: int) -> bytes:
+    content = await file.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise ValueError(f"Uploads are limited to {max_bytes // (1024 * 1024)} MB.")
+    return content
 
 
 def guess_image_content_type(filename: str) -> str:
@@ -71,6 +87,9 @@ def build_image_fallback_text(filename: str, reason: str) -> str:
 
 
 async def extract_text_from_image(content: bytes, content_type: str, filename: str = "screenshot") -> str:
+    if not settings.ai_image_processing_enabled:
+        return build_image_fallback_text(filename, "AI image processing is disabled for this deployment.")
+
     if not settings.gemini_api_key:
         return build_image_fallback_text(filename, "Gemini OCR is not configured.")
 
@@ -130,15 +149,12 @@ async def extract_text_from_image(content: bytes, content_type: str, filename: s
 
 
 async def extract_text_from_url(url: str) -> tuple[str, str, str]:
-    parsed_url = urlparse(url.strip())
-    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
-        raise ValueError("Please enter a valid http or https link.")
-
-    normalized_url = parsed_url.geturl()
+    normalized_url = await validate_public_url(url.strip())
     headers = {
         "User-Agent": "MemvoraBot/1.0 (+https://memvora.app)",
         "Accept": "text/html,text/plain,application/xhtml+xml",
     }
+    parsed_url = urlparse(normalized_url)
 
     def fallback_link_memory(reason: str) -> tuple[str, str, str]:
         domain = parsed_url.netloc.replace("www.", "")
@@ -152,15 +168,15 @@ async def extract_text_from_url(url: str) -> tuple[str, str, str]:
         return fallback, f"Saved link from {domain}", domain
 
     try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers=headers) as client:
-            response = await client.get(normalized_url)
-            response.raise_for_status()
+        response = await fetch_public_url(normalized_url, headers)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in {401, 403, 999}:
             return fallback_link_memory(
                 "This link appears to require login or blocks automated reading."
             )
         return fallback_link_memory("Memvora could not read the page content from this link.")
+    except ValueError as exc:
+        raise exc
     except Exception:
         return fallback_link_memory("Memvora could not connect to this link.")
 
@@ -193,6 +209,76 @@ async def extract_text_from_url(url: str) -> tuple[str, str, str]:
     return memory_text.strip(), title, domain
 
 
+async def fetch_public_url(url: str, headers: dict[str, str]) -> httpx.Response:
+    current_url = url
+    async with httpx.AsyncClient(timeout=20, follow_redirects=False, headers=headers) as client:
+        for _ in range(MAX_URL_REDIRECTS + 1):
+            await validate_public_url(current_url)
+            async with client.stream("GET", current_url) as response:
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("location")
+                    if not location:
+                        response.raise_for_status()
+                    current_url = urljoin(current_url, location)
+                    continue
+
+                response.raise_for_status()
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > settings.max_url_bytes:
+                        raise ValueError(f"Fetched pages are limited to {settings.max_url_bytes // 1024} KB.")
+
+                return httpx.Response(
+                    status_code=response.status_code,
+                    headers=response.headers,
+                    content=bytes(body),
+                    request=response.request,
+                    extensions=response.extensions,
+                )
+
+    raise ValueError("This link redirects too many times.")
+
+
+async def validate_public_url(url: str) -> str:
+    parsed_url = urlparse(url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+        raise ValueError("Please enter a valid http or https link.")
+    if parsed_url.username or parsed_url.password:
+        raise ValueError("Links with embedded usernames or passwords are not supported.")
+
+    port = parsed_url.port or (443 if parsed_url.scheme == "https" else 80)
+    if port not in ALLOWED_URL_PORTS:
+        raise ValueError("Only standard HTTP and HTTPS ports are supported.")
+
+    hostname = parsed_url.hostname.lower()
+    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".localhost"):
+        raise ValueError("Localhost links are not supported.")
+
+    await ensure_public_hostname(hostname)
+    return parsed_url.geturl()
+
+
+async def ensure_public_hostname(hostname: str) -> None:
+    try:
+        ipaddress.ip_address(hostname)
+        addresses = [hostname]
+    except ValueError:
+        try:
+            resolved = await asyncio.to_thread(socket.getaddrinfo, hostname, None, type=socket.SOCK_STREAM)
+        except socket.gaierror as exc:
+            raise ValueError("Memvora could not resolve this link.") from exc
+        addresses = sorted({item[4][0] for item in resolved})
+
+    if not addresses:
+        raise ValueError("Memvora could not resolve this link.")
+
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
+        if not ip.is_global:
+            raise ValueError("Private, local, or internal network links are not supported.")
+
+
 def chunk_text(text: str, chunk_size: int = 900, overlap: int = 150) -> list[str]:
     clean_text = " ".join(text.split())
     if not clean_text:
@@ -206,6 +292,8 @@ def chunk_text(text: str, chunk_size: int = 900, overlap: int = 150) -> list[str
         chunk = clean_text[start:end].strip()
         if chunk:
             chunks.append(chunk)
+            if len(chunks) > settings.max_chunks_per_memory:
+                raise ValueError(f"Memories are limited to {settings.max_chunks_per_memory} searchable chunks.")
         start += chunk_size - overlap
 
     return chunks

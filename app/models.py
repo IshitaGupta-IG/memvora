@@ -26,7 +26,7 @@ class MemoryResponse(BaseModel):
 
 class MemoryUpdateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
-    original_content: str = Field(..., min_length=1)
+    original_content: str = Field(..., min_length=1, max_length=100000)
 
 
 class SearchResponse(BaseModel):

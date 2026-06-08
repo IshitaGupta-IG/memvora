@@ -27,6 +27,7 @@ def create_memory(user_id: str, title: str, content: str, source_type: str) -> d
     if not chunks:
         raise HTTPException(status_code=400, detail="No readable text was found.")
 
+    enforce_memory_quota(user_id)
     embeddings = create_embeddings(chunks)
     chunk_rows = []
     memory = None
@@ -87,6 +88,16 @@ def list_memories(user_id: str, days: int | None = None, limit: int = 20) -> lis
     except APIError as exc:
         handle_supabase_error(exc)
     return response.data
+
+
+def enforce_memory_quota(user_id: str) -> None:
+    try:
+        response = supabase.table("memories").select("id", count="exact").eq("user_id", user_id).limit(1).execute()
+    except APIError as exc:
+        handle_supabase_error(exc)
+
+    if (response.count or 0) >= settings.max_user_memories:
+        raise HTTPException(status_code=429, detail=f"Memory limit reached. Current limit is {settings.max_user_memories} memories.")
 
 
 def update_memory(user_id: str, memory_id: str, title: str, content: str) -> dict:
