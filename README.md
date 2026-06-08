@@ -40,8 +40,9 @@ CORS_ORIGINS=http://localhost:5173
 - `GET /me` - confirm the current signed-in or guest user
 - `GET /memories` - list current user's recent memories
 - `GET /memories?days=7` - list memories from a recent time window
-- `POST /upload` - upload PDF/TXT/Markdown or pasted text
+- `POST /upload` - upload PDF/TXT/Markdown/images or pasted text
 - `POST /upload` - also accepts `link_url` to save readable web links
+- Screenshot/image uploads use Gemini to extract readable text and a short visual summary, so `GEMINI_API_KEY` is required for image memories.
 - `GET /search?query=...` - semantic search over memories
 - `POST /chat` - ask a question using retrieved memory context
 - `POST /summary` - summarize recent memories and themes

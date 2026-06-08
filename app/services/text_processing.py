@@ -1,8 +1,11 @@
+import base64
 from io import BytesIO
 from urllib.parse import urlparse
 
 import httpx
 from fastapi import UploadFile
+
+from app.config import settings
 
 
 SUPPORTED_FILE_TYPES = {
@@ -10,6 +13,8 @@ SUPPORTED_FILE_TYPES = {
     "text/plain": "text",
     "text/markdown": "markdown",
 }
+SUPPORTED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
+GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
 async def extract_text_from_file(file: UploadFile) -> tuple[str, str]:
@@ -27,7 +32,81 @@ async def extract_text_from_file(file: UploadFile) -> tuple[str, str]:
     if filename.lower().endswith((".txt", ".md", ".markdown")) or content_type.startswith("text/"):
         return content.decode("utf-8", errors="ignore").strip(), "text"
 
-    raise ValueError("Please upload a PDF, TXT, or Markdown file.")
+    if filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")) or content_type in SUPPORTED_IMAGE_TYPES:
+        return await extract_text_from_image(content, content_type or guess_image_content_type(filename)), "screenshot"
+
+    raise ValueError("Please upload a PDF, TXT, Markdown, PNG, JPG, or WebP file.")
+
+
+def guess_image_content_type(filename: str) -> str:
+    lower_filename = filename.lower()
+    if lower_filename.endswith(".png"):
+        return "image/png"
+    if lower_filename.endswith((".jpg", ".jpeg")):
+        return "image/jpeg"
+    if lower_filename.endswith(".webp"):
+        return "image/webp"
+    return "image/png"
+
+
+def extract_gemini_text(data: dict) -> str:
+    try:
+        parts = data["candidates"][0]["content"]["parts"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError("Gemini returned an unexpected image response.") from exc
+
+    text = "\n".join(part.get("text", "") for part in parts if part.get("text"))
+    if not text.strip():
+        raise RuntimeError("Gemini returned no readable text for this screenshot.")
+    return text.strip()
+
+
+async def extract_text_from_image(content: bytes, content_type: str) -> str:
+    if not settings.gemini_api_key:
+        raise ValueError("Screenshot uploads need GEMINI_API_KEY because Memvora uses Gemini to read images.")
+
+    if content_type not in SUPPORTED_IMAGE_TYPES:
+        content_type = "image/png"
+
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "inlineData": {
+                            "mimeType": content_type,
+                            "data": base64.b64encode(content).decode("ascii"),
+                        },
+                    },
+                    {
+                        "text": (
+                            "Extract all readable text from this screenshot. "
+                            "Then add a short visual summary and any important context. "
+                            "Return plain text only."
+                        )
+                    },
+                ],
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 1200,
+        },
+    }
+    url = GEMINI_URL_TEMPLATE.format(model=settings.gemini_model)
+
+    try:
+        async with httpx.AsyncClient(timeout=45) as client:
+            response = await client.post(url, params={"key": settings.gemini_api_key}, json=payload)
+            response.raise_for_status()
+            extracted_text = extract_gemini_text(response.json())
+    except httpx.HTTPStatusError as exc:
+        raise ValueError("Gemini could not read this screenshot. Check your Gemini key, model, or rate limits.") from exc
+    except Exception as exc:
+        raise ValueError("Memvora could not read text from this screenshot.") from exc
+
+    return f"Screenshot text and visual summary:\n\n{extracted_text}"
 
 
 async def extract_text_from_url(url: str) -> tuple[str, str, str]:

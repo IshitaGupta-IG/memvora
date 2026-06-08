@@ -167,4 +167,36 @@ async def summarize_memories(memories: list[dict], days: int) -> str:
         "Organize the answer into: key themes, important details, open questions, and suggested next actions."
     )
 
-    return await ask_openrouter(prompt, context)
+    try:
+        return await ask_openrouter(prompt, context)
+    except HTTPException:
+        return build_local_summary(memories, days)
+
+
+def build_local_summary(memories: list[dict], days: int) -> str:
+    lines = [
+        f"AI summary is temporarily unavailable, so here is a basic summary of memories from the last {days} days.",
+        "",
+        "Key themes:",
+    ]
+
+    for memory in memories[:8]:
+        title = memory.get("title") or "Untitled"
+        content = " ".join((memory.get("original_content") or "").split())
+        snippet = content[:220].rstrip()
+        if len(content) > 220:
+            snippet += "..."
+        lines.append(f"- {title}: {snippet or 'No readable preview available.'}")
+
+    if len(memories) > 8:
+        lines.append(f"- Plus {len(memories) - 8} more saved memories.")
+
+    lines.extend(
+        [
+            "",
+            "Suggested next actions:",
+            "- Check that GEMINI_API_KEY is configured on the backend.",
+            "- Redeploy the backend if the Gemini-first fallback commit is not live yet.",
+        ]
+    )
+    return "\n".join(lines)
