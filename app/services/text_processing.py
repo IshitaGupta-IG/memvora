@@ -27,6 +27,9 @@ IGNORED_HTML_TAGS = {"script", "style", "nav", "footer", "header", "noscript", "
 MIN_USEFUL_LINK_TEXT_CHARS = 120
 READER_FALLBACK_PREFIX = "https://r.jina.ai/http://"
 SOCIAL_LINK_DOMAINS = ("linkedin.com", "facebook.com", "fb.watch", "instagram.com", "threads.net", "x.com", "twitter.com")
+LINK_SUMMARY_SENTENCES = 5
+LINK_DETAIL_SENTENCES = 4
+LINK_MAX_SENTENCE_CHARS = 320
 
 
 @dataclass(frozen=True)
@@ -283,16 +286,118 @@ async def extract_text_from_url(url: str) -> tuple[str, str, str]:
         if reader_result:
             title, text, domain = reader_result
 
-    if was_truncated:
-        text = f"{text}\n\n[Memvora read the first {settings.max_url_bytes // 1024} KB of this page to keep link ingestion fast and safe.]"
-
-    memory_text = f"Source URL: {final_url}\nSource domain: {domain}\n\n{text}"
+    memory_text = build_link_memory_text(final_url, domain, title, text, was_truncated)
     return memory_text.strip(), title, domain
 
 
 def is_social_link_domain(domain: str) -> bool:
     normalized_domain = domain.lower().removeprefix("www.")
     return any(normalized_domain == candidate or normalized_domain.endswith(f".{candidate}") for candidate in SOCIAL_LINK_DOMAINS)
+
+
+def build_link_memory_text(url: str, domain: str, title: str, text: str, was_truncated: bool = False) -> str:
+    summary, details, notes = summarize_link_text(text)
+    sections = [
+        f"Source URL: {url}",
+        f"Source domain: {domain}",
+        f"Title: {title}",
+        "",
+        "Summary:",
+        summary or "No readable page summary was found. Add a short note to make this memory easier to search.",
+    ]
+    if details:
+        sections.extend(["", "Useful details:", details])
+    if was_truncated:
+        notes.append(f"Memvora read the first {settings.max_url_bytes // 1024} KB of this page to keep link ingestion fast and safe.")
+    if notes:
+        sections.extend(["", "Notes:", "\n".join(f"- {note}" for note in notes)])
+    return "\n".join(sections)
+
+
+def summarize_link_text(text: str) -> tuple[str, str, list[str]]:
+    notes: list[str] = []
+    clean_text = clean_link_text_for_summary(text)
+    reader_note = "[Memvora used a public reader fallback"
+    if reader_note in clean_text:
+        clean_text, _, note_tail = clean_text.partition(reader_note)
+        notes.append(f"{reader_note}{note_tail}".strip(" []"))
+
+    sentences = split_readable_sentences(clean_text)
+    if not sentences and clean_text:
+        sentences = [clean_text[:LINK_MAX_SENTENCE_CHARS].strip()]
+
+    summary_sentences = sentences[:LINK_SUMMARY_SENTENCES]
+    detail_sentences = sentences[LINK_SUMMARY_SENTENCES : LINK_SUMMARY_SENTENCES + LINK_DETAIL_SENTENCES]
+    summary = "\n".join(f"- {sentence}" for sentence in summary_sentences)
+    details = "\n".join(f"- {sentence}" for sentence in detail_sentences)
+    return summary, details, notes
+
+
+def clean_link_text_for_summary(text: str) -> str:
+    clean_text = " ".join(text.split())
+    if "Markdown Content:" in clean_text:
+        _, _, clean_text = clean_text.partition("Markdown Content:")
+    noisy_phrases = [
+        "Jump to content",
+        "Skip to main content",
+        "Agree & Join LinkedIn",
+        "By clicking Continue to join or sign in",
+        "Log In Forgot Account?",
+    ]
+    for phrase in noisy_phrases:
+        clean_text = clean_text.replace(phrase, " ")
+    return " ".join(clean_text.split())
+
+
+def split_readable_sentences(text: str) -> list[str]:
+    protected_text = text.replace("...", ".")
+    raw_sentences = []
+    sentence_start = 0
+    for index, char in enumerate(protected_text):
+        if char not in ".!?":
+            continue
+        next_char = protected_text[index + 1] if index + 1 < len(protected_text) else " "
+        if not next_char.isspace():
+            continue
+        raw_sentences.append(protected_text[sentence_start : index + 1])
+        sentence_start = index + 1
+    if sentence_start < len(protected_text):
+        raw_sentences.append(protected_text[sentence_start:])
+
+    sentences: list[str] = []
+    seen: set[str] = set()
+    for sentence in raw_sentences:
+        clean_sentence = " ".join(sentence.split()).strip(" -|")
+        if is_noisy_link_sentence(clean_sentence):
+            continue
+        if len(clean_sentence) < 35:
+            continue
+        if len(clean_sentence) > LINK_MAX_SENTENCE_CHARS:
+            clean_sentence = clean_sentence[:LINK_MAX_SENTENCE_CHARS].rsplit(" ", 1)[0].rstrip(" ,;:") + "..."
+        normalized = clean_sentence.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        sentences.append(clean_sentence)
+        if len(sentences) >= LINK_SUMMARY_SENTENCES + LINK_DETAIL_SENTENCES:
+            break
+    return sentences
+
+
+def is_noisy_link_sentence(sentence: str) -> bool:
+    lowered = sentence.lower()
+    noisy_fragments = [
+        "url source:",
+        "markdown content:",
+        "skip to main content",
+        "login",
+        "forgot account",
+        "sign in",
+        "cookie policy",
+        "user agreement",
+        "privacy policy",
+    ]
+    return any(fragment in lowered for fragment in noisy_fragments)
 
 
 def parse_html_content(html: str, domain: str) -> tuple[str, str]:
