@@ -180,8 +180,10 @@ async def extract_text_from_image(content: bytes, content_type: str, filename: s
                     },
                     {
                         "text": (
-                            "Extract all readable text from this screenshot. "
-                            "Then add a short visual summary and any important context. "
+                            "Extract all readable text from this screenshot or image. "
+                            "Then describe the visible objects, scene, food, places, UI, people, and context in searchable plain English. "
+                            "If it shows food, identify likely cuisine, dishes, meal style, ingredients, and related names such as thali, platter, meal, curry, rice, sweets, or regional cuisine when visually supported. "
+                            "End with a short 'Search keywords:' line of useful terms. "
                             "Return plain text only."
                         )
                     },

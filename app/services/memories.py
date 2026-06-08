@@ -27,6 +27,12 @@ COUNTRY_QUERY_ALIASES = {
     "korean": "korea",
     "italian": "italy",
 }
+SEARCH_TERM_EXPANSIONS = {
+    "bengali": ["bengal", "kolkata", "indian", "indian cuisine", "rice", "curry"],
+    "thali": ["meal", "platter", "spread", "plate", "indian food", "rice", "curry", "sweets"],
+    "thai": ["thailand", "thai cuisine"],
+    "food": ["meal", "dish", "cuisine"],
+}
 
 
 def handle_supabase_error(exc: APIError) -> None:
@@ -248,6 +254,12 @@ def search_memories(user_id: str, query: str, limit: int = 5) -> list[dict]:
             if not existing or similarity > float(existing.get("similarity") or 0):
                 merged_results[result_key] = result
 
+    if len(merged_results) < limit:
+        for result in keyword_memory_matches(user_id, clean_query, limit - len(merged_results)):
+            result_key = str(result.get("chunk_id") or result.get("memory_id"))
+            if result_key not in merged_results:
+                merged_results[result_key] = result
+
     return sorted(
         merged_results.values(),
         key=lambda result: float(result.get("similarity") or 0),
@@ -270,7 +282,68 @@ def expand_search_query(query: str) -> list[str]:
         if expanded_query not in variants:
             variants.append(expanded_query)
 
-    return variants[:3]
+    expanded_terms = []
+    for word in lowered_words:
+        expanded_terms.extend(SEARCH_TERM_EXPANSIONS.get(word, []))
+    if expanded_terms:
+        expanded_query = " ".join([query, *expanded_terms[:8]])
+        if expanded_query not in variants:
+            variants.append(expanded_query)
+
+    return variants[:4]
+
+
+def keyword_memory_matches(user_id: str, query: str, limit: int) -> list[dict]:
+    if limit <= 0:
+        return []
+
+    terms = expanded_keyword_terms(query)
+    if not terms:
+        return []
+
+    try:
+        response = (
+            supabase.table("memories")
+            .select("id,title,original_content,created_at")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(100)
+            .execute()
+        )
+    except APIError as exc:
+        handle_supabase_error(exc)
+
+    scored_matches = []
+    for memory in response.data:
+        searchable_text = f"{memory.get('title', '')} {memory.get('original_content', '')}".lower()
+        matched_terms = {term for term in terms if term in searchable_text}
+        if not matched_terms:
+            continue
+        score = min(0.98, settings.memory_similarity_threshold + 0.03 + (0.03 * len(matched_terms)))
+        content = memory.get("original_content", "")
+        scored_matches.append(
+            {
+                "chunk_id": memory["id"],
+                "memory_id": memory["id"],
+                "title": memory.get("title") or "Untitled",
+                "content": content[:900],
+                "similarity": score,
+                "created_at": memory.get("created_at"),
+            }
+        )
+
+    return sorted(scored_matches, key=lambda result: float(result["similarity"]), reverse=True)[:limit]
+
+
+def expanded_keyword_terms(query: str) -> set[str]:
+    terms = {word.strip(".,;:!?()[]{}\"'").lower() for word in query.split()}
+    terms = {term for term in terms if len(term) >= 3}
+    for term in list(terms):
+        terms.update(SEARCH_TERM_EXPANSIONS.get(term, []))
+        alias = COUNTRY_QUERY_ALIASES.get(term)
+        if alias:
+            terms.add(alias)
+    return terms
 
 
 def build_context(chunks: list[dict]) -> str:
