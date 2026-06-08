@@ -7,6 +7,7 @@ from app.config import settings
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
+AI_REQUEST_TIMEOUT_SECONDS = 18
 FREE_FALLBACK_MODELS = [
     "mistralai/mistral-7b-instruct:free",
     "google/gemma-2-9b-it:free",
@@ -61,7 +62,7 @@ async def ask_gemini(question: str, context: str, client: httpx.AsyncClient | No
     params = {"key": settings.gemini_api_key}
 
     owns_client = client is None
-    active_client = client or httpx.AsyncClient(timeout=45)
+    active_client = client or httpx.AsyncClient(timeout=AI_REQUEST_TIMEOUT_SECONDS)
     last_error: Exception | None = None
     try:
         for model in settings.gemini_model_list:
@@ -129,7 +130,7 @@ async def ask_openrouter(question: str, context: str) -> str:
 
     last_error: Exception | None = None
     try:
-        async with httpx.AsyncClient(timeout=45) as client:
+        async with httpx.AsyncClient(timeout=AI_REQUEST_TIMEOUT_SECONDS) as client:
             for provider in settings.ai_providers:
                 if provider == "gemini" and settings.gemini_api_key:
                     try:

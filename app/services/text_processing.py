@@ -15,6 +15,7 @@ SUPPORTED_FILE_TYPES = {
 }
 SUPPORTED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
 GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+IMAGE_OCR_TIMEOUT_SECONDS = 10
 
 
 async def extract_text_from_file(file: UploadFile) -> tuple[str, str]:
@@ -103,7 +104,8 @@ async def extract_text_from_image(content: bytes, content_type: str, filename: s
         },
     }
     try:
-        async with httpx.AsyncClient(timeout=45) as client:
+        timeout = httpx.Timeout(IMAGE_OCR_TIMEOUT_SECONDS, connect=5)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             last_error: Exception | None = None
             for model in settings.gemini_model_list:
                 try:
@@ -111,6 +113,10 @@ async def extract_text_from_image(content: bytes, content_type: str, filename: s
                     response.raise_for_status()
                     extracted_text = extract_gemini_text(response.json())
                     break
+                except httpx.HTTPStatusError as exc:
+                    last_error = exc
+                    if exc.response.status_code in {401, 403, 429}:
+                        break
                 except Exception as exc:
                     last_error = exc
             else:
