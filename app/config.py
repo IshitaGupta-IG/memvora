@@ -20,6 +20,7 @@ DEFAULT_MAX_USER_MEMORIES = 500
 DEFAULT_UPLOADS_PER_HOUR = 60
 DEFAULT_AI_EXTERNAL_PROCESSING_ENABLED = True
 DEFAULT_AI_IMAGE_PROCESSING_ENABLED = True
+DEFAULT_LINK_READER_FALLBACK_ENABLED = True
 
 
 class Settings(BaseSettings):
@@ -43,6 +44,7 @@ class Settings(BaseSettings):
     uploads_per_hour: int = DEFAULT_UPLOADS_PER_HOUR
     ai_external_processing_enabled: bool = DEFAULT_AI_EXTERNAL_PROCESSING_ENABLED
     ai_image_processing_enabled: bool = DEFAULT_AI_IMAGE_PROCESSING_ENABLED
+    link_reader_fallback_enabled: bool = DEFAULT_LINK_READER_FALLBACK_ENABLED
     supabase_url: str
     supabase_service_key: str
     frontend_url: str = "http://localhost:5173"

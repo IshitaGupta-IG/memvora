@@ -29,7 +29,7 @@ This service is built as a production-minded FastAPI API with Supabase Auth, Sup
 | Vector search | pgvector | Stores embeddings inside Postgres and enables semantic similarity search. |
 | Embeddings | sentence-transformers | Creates local embeddings without sending every memory to an LLM provider. |
 | AI providers | Google Gemini + OpenRouter | Multi-provider model fallback for chat, summaries, and screenshot OCR. |
-| Link parsing | httpx + BeautifulSoup | Fetches and extracts readable text from public web pages. |
+| Link parsing | httpx + BeautifulSoup + reader fallback | Fetches public pages directly and can fall back for LinkedIn/Facebook-style blockers. |
 | PDF parsing | pypdf | Extracts text from uploaded PDFs with page limits. |
 | Security controls | SSRF checks, CORS allowlist, size limits, rate limits | Reduces abuse risk for public deployments. |
 
@@ -60,6 +60,7 @@ Memvora treats user memory as sensitive data.
 - AI privacy switches:
   - `AI_EXTERNAL_PROCESSING_ENABLED=false` disables chat and summary provider calls.
   - `AI_IMAGE_PROCESSING_ENABLED=false` saves screenshots without sending images to Gemini OCR.
+  - `LINK_READER_FALLBACK_ENABLED=false` disables the public reader fallback for sites that block direct server-side reading.
 - Prompt-injection boundary: memory content is treated as untrusted evidence, not system instructions.
 - CORS is exact-origin based in production. Avoid wildcard origins when credentials or auth are involved.
 - Service-role access remains server-only. Backend queries still filter by authenticated `user_id`.
@@ -128,6 +129,7 @@ UPLOADS_PER_HOUR=60
 
 AI_EXTERNAL_PROCESSING_ENABLED=true
 AI_IMAGE_PROCESSING_ENABLED=true
+LINK_READER_FALLBACK_ENABLED=true
 
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_KEY=your_server_only_supabase_secret_or_service_role_key

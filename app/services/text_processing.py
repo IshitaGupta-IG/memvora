@@ -24,6 +24,9 @@ IMAGE_OCR_TIMEOUT_SECONDS = 10
 ALLOWED_URL_PORTS = {80, 443}
 MAX_URL_REDIRECTS = 3
 IGNORED_HTML_TAGS = {"script", "style", "nav", "footer", "header", "noscript", "svg"}
+MIN_USEFUL_LINK_TEXT_CHARS = 120
+READER_FALLBACK_PREFIX = "https://r.jina.ai/http://"
+SOCIAL_LINK_DOMAINS = ("linkedin.com", "facebook.com", "fb.watch", "instagram.com", "threads.net", "x.com", "twitter.com")
 
 
 @dataclass(frozen=True)
@@ -223,6 +226,7 @@ async def extract_text_from_url(url: str) -> tuple[str, str, str]:
         "Accept": "text/html,text/plain,application/xhtml+xml",
     }
     parsed_url = urlparse(normalized_url)
+    final_url = normalized_url
 
     def fallback_link_memory(reason: str) -> tuple[str, str, str]:
         domain = parsed_url.netloc.replace("www.", "")
@@ -235,39 +239,60 @@ async def extract_text_from_url(url: str) -> tuple[str, str, str]:
         )
         return fallback, f"Saved link from {domain}", domain
 
+    was_truncated = False
     try:
         response = await fetch_public_url(normalized_url, headers)
+        was_truncated = bool(response.extensions.get("memvora_truncated"))
+        content_type = response.headers.get("content-type", "")
+        domain = urlparse(str(response.url)).netloc.replace("www.", "") or parsed_url.netloc.replace("www.", "")
+        final_url = str(response.url)
+
+        if "text/plain" in content_type:
+            title = f"Saved link from {domain}"
+            text = response.text
+        else:
+            title, text = parse_html_content(response.text, domain)
     except httpx.HTTPStatusError as exc:
-        if exc.response.status_code in {401, 403, 999}:
-            return fallback_link_memory(
-                "This link appears to require login or blocks automated reading."
-            )
-        return fallback_link_memory("Memvora could not read the page content from this link.")
+        fallback_reason = (
+            "This link appears to require login or blocks automated reading."
+            if exc.response.status_code in {401, 403, 999}
+            else "Memvora could not read the page content from this link."
+        )
+        reader_result = await extract_with_reader_fallback(normalized_url, parsed_url.netloc.replace("www.", ""))
+        if reader_result:
+            title, text, domain = reader_result
+        else:
+            return fallback_link_memory(fallback_reason)
     except ValueError as exc:
         raise exc
     except Exception:
-        return fallback_link_memory("Memvora could not connect to this link.")
+        reader_result = await extract_with_reader_fallback(normalized_url, parsed_url.netloc.replace("www.", ""))
+        if reader_result:
+            title, text, domain = reader_result
+        else:
+            return fallback_link_memory("Memvora could not connect to this link.")
 
-    content_type = response.headers.get("content-type", "")
-    domain = urlparse(str(response.url)).netloc.replace("www.", "") or parsed_url.netloc.replace("www.", "")
+    if len(text.strip()) < MIN_USEFUL_LINK_TEXT_CHARS:
+        reader_result = await extract_with_reader_fallback(normalized_url, domain)
+        if reader_result:
+            title, text, domain = reader_result
+        elif not text.strip():
+            text = "No readable page text was found. Add a pasted excerpt or note with this link."
+    elif is_social_link_domain(domain):
+        reader_result = await extract_with_reader_fallback(normalized_url, domain)
+        if reader_result:
+            title, text, domain = reader_result
 
-    if "text/plain" in content_type:
-        title = f"Saved link from {domain}"
-        text = response.text
-    else:
-        try:
-            title, text = parse_html_content(response.text, domain)
-        except Exception:
-            return fallback_link_memory("Memvora saved the link but could not parse the page content.")
-
-    if not text:
-        text = "No readable page text was found. Add a pasted excerpt or note with this link."
-
-    if response.extensions.get("memvora_truncated"):
+    if was_truncated:
         text = f"{text}\n\n[Memvora read the first {settings.max_url_bytes // 1024} KB of this page to keep link ingestion fast and safe.]"
 
-    memory_text = f"Source URL: {response.url}\nSource domain: {domain}\n\n{text}"
+    memory_text = f"Source URL: {final_url}\nSource domain: {domain}\n\n{text}"
     return memory_text.strip(), title, domain
+
+
+def is_social_link_domain(domain: str) -> bool:
+    normalized_domain = domain.lower().removeprefix("www.")
+    return any(normalized_domain == candidate or normalized_domain.endswith(f".{candidate}") for candidate in SOCIAL_LINK_DOMAINS)
 
 
 def parse_html_content(html: str, domain: str) -> tuple[str, str]:
@@ -289,6 +314,41 @@ def parse_html_content(html: str, domain: str) -> tuple[str, str]:
     main_content = soup.find("article") or soup.find("main") or soup.body or soup
     text = " ".join(main_content.get_text(" ").split())
     return title, text
+
+
+async def extract_with_reader_fallback(url: str, domain: str) -> tuple[str, str, str] | None:
+    if not settings.link_reader_fallback_enabled:
+        return None
+
+    reader_url = f"{READER_FALLBACK_PREFIX}{url}"
+    headers = {
+        "User-Agent": "MemvoraBot/1.0",
+        "Accept": "text/plain,text/markdown",
+    }
+    try:
+        response = await fetch_public_url(reader_url, headers)
+    except Exception:
+        return None
+
+    text = " ".join(response.text.split())
+    if len(text) < MIN_USEFUL_LINK_TEXT_CHARS:
+        return None
+
+    title = f"Saved link from {domain}"
+    for line in response.text.splitlines():
+        clean_line = line.strip()
+        if clean_line.lower().startswith("title:"):
+            extracted_title = clean_line.split(":", 1)[1].strip()
+            if extracted_title:
+                title = extracted_title[:200]
+            break
+
+    text = (
+        f"{text}\n\n"
+        "[Memvora used a public reader fallback because the original site blocked direct server-side reading. "
+        "Private or login-only content may still be incomplete.]"
+    )
+    return title, text, domain
 
 
 async def fetch_public_url(url: str, headers: dict[str, str]) -> httpx.Response:
