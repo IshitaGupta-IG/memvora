@@ -121,7 +121,7 @@ MEMORY_SIMILARITY_THRESHOLD=0.20
 MAX_REQUEST_BYTES=8388608
 MAX_UPLOAD_BYTES=5242880
 MAX_IMAGE_BYTES=3145728
-MAX_SCREENSHOT_STORAGE_BYTES=2097152
+MAX_SCREENSHOT_STORAGE_BYTES=3145728
 MAX_URL_BYTES=1048576
 MAX_MEMORY_CHARS=100000
 MAX_CHUNKS_PER_MEMORY=80
@@ -146,7 +146,7 @@ Notes:
 - `GEMINI_MODELS` and `OPENROUTER_MODELS` are comma-separated fallback lists. Memvora tries up to three models per provider.
 - `AI_PROVIDER_ORDER=gemini,openrouter` means Gemini is tried first, then OpenRouter.
 - `MEMORY_SIMILARITY_THRESHOLD=0.20` is recommended for forgiving retrieval. The backend also clamps overly strict values for chat/search so spelling mistakes and weaker semantic matches still have a chance.
-- `MAX_SCREENSHOT_STORAGE_BYTES` controls which screenshots get saved as previews. Larger screenshots still save OCR text, but not image previews.
+- `MAX_SCREENSHOT_STORAGE_BYTES` controls which screenshots get saved as previews. Keep it at least as large as `MAX_IMAGE_BYTES` if every accepted image upload should keep its preview. Larger screenshots still save OCR text, but not image previews.
 - `CORS_ORIGINS` must exactly match deployed frontend origins, including `https://`.
 
 ## Local Setup

@@ -71,15 +71,7 @@ def create_memory(user_id: str, title: str, content: str, source_type: str, imag
         memory_payload["image_data_url"] = image_data_url
 
     try:
-        try:
-            memory_response = supabase.table("memories").insert(memory_payload).execute()
-        except APIError as exc:
-            if image_data_url and "image_data_url" in str(exc):
-                memory_payload.pop("image_data_url", None)
-                memory_response = supabase.table("memories").insert(memory_payload).execute()
-            else:
-                raise
-
+        memory_response = supabase.table("memories").insert(memory_payload).execute()
         memory = memory_response.data[0]
         chunk_rows = [
             {
