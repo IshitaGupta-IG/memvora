@@ -82,6 +82,57 @@ def list_memories(user_id: str, days: int | None = None, limit: int = 20) -> lis
     return response.data
 
 
+def update_memory(user_id: str, memory_id: str, title: str, content: str) -> dict:
+    chunks = chunk_text(content)
+    if not chunks:
+        raise HTTPException(status_code=400, detail="No readable text was found.")
+
+    try:
+        existing = supabase.table("memories").select("id").eq("id", memory_id).eq("user_id", user_id).limit(1).execute()
+        if not existing.data:
+            raise HTTPException(status_code=404, detail="Memory not found.")
+
+        memory_response = (
+            supabase.table("memories")
+            .update({"title": title, "original_content": content})
+            .eq("id", memory_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+
+        supabase.table("memory_chunks").delete().eq("memory_id", memory_id).eq("user_id", user_id).execute()
+        embeddings = create_embeddings(chunks)
+        chunk_rows = [
+            {
+                "memory_id": memory_id,
+                "user_id": user_id,
+                "content": chunk,
+                "chunk_index": index,
+                "embedding": embedding,
+            }
+            for index, (chunk, embedding) in enumerate(zip(chunks, embeddings))
+        ]
+        supabase.table("memory_chunks").insert(chunk_rows).execute()
+    except APIError as exc:
+        handle_supabase_error(exc)
+
+    return {
+        "memory": memory_response.data[0] if memory_response.data else {"id": memory_id, "title": title},
+        "chunks_created": len(chunk_rows),
+    }
+
+
+def delete_memory(user_id: str, memory_id: str) -> None:
+    try:
+        existing = supabase.table("memories").select("id").eq("id", memory_id).eq("user_id", user_id).limit(1).execute()
+        if not existing.data:
+            raise HTTPException(status_code=404, detail="Memory not found.")
+
+        supabase.table("memories").delete().eq("id", memory_id).eq("user_id", user_id).execute()
+    except APIError as exc:
+        handle_supabase_error(exc)
+
+
 def search_memories(user_id: str, query: str, limit: int = 5) -> list[dict]:
     if not query.strip():
         raise HTTPException(status_code=400, detail="Search query cannot be empty.")

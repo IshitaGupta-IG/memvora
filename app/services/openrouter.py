@@ -59,14 +59,24 @@ async def ask_gemini(question: str, context: str, client: httpx.AsyncClient | No
         },
     }
     params = {"key": settings.gemini_api_key}
-    url = GEMINI_URL_TEMPLATE.format(model=settings.gemini_model)
 
     owns_client = client is None
     active_client = client or httpx.AsyncClient(timeout=45)
+    last_error: Exception | None = None
     try:
-        response = await active_client.post(url, params=params, json=payload)
-        response.raise_for_status()
-        return extract_gemini_text(response.json())
+        for model in settings.gemini_model_list:
+            try:
+                response = await active_client.post(GEMINI_URL_TEMPLATE.format(model=model), params=params, json=payload)
+                response.raise_for_status()
+                return extract_gemini_text(response.json())
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                if exc.response.status_code not in RETRYABLE_STATUS_CODES:
+                    continue
+            except Exception as exc:
+                last_error = exc
+                continue
+        raise last_error or RuntimeError("Gemini returned no answer.")
     finally:
         if owns_client:
             await active_client.aclose()
@@ -84,8 +94,9 @@ async def ask_openrouter_only(question: str, context: str, client: httpx.AsyncCl
         "X-Title": "Memvora",
     }
 
-    models_to_try = [settings.openrouter_model]
+    models_to_try = settings.openrouter_model_list
     models_to_try.extend(model for model in FREE_FALLBACK_MODELS if model not in models_to_try)
+    models_to_try = models_to_try[:3]
 
     last_error: Exception | None = None
     for model in models_to_try:
@@ -145,11 +156,11 @@ async def ask_openrouter(question: str, context: str) -> str:
         raise HTTPException(status_code=502, detail=message) from exc
     except Exception as exc:
         if settings.openrouter_api_key and settings.gemini_api_key:
-            message = "OpenRouter and Gemini both failed. Check API keys, selected models, or rate limits."
+            message = "Gemini and OpenRouter both failed after trying their fallback models. Please try again shortly."
         elif settings.gemini_api_key:
-            message = "Gemini response failed. Check your API key, model, or rate limits."
+            message = "Gemini failed after trying its fallback models. Please try again shortly."
         else:
-            message = "OpenRouter response failed. Check your API key, model, or rate limits."
+            message = "OpenRouter failed after trying its fallback models. Please try again shortly."
         raise HTTPException(status_code=502, detail=message) from exc
 
 

@@ -16,9 +16,11 @@ uvicorn app.main:app --reload
 
 ```env
 OPENROUTER_API_KEY=your_openrouter_api_key
-OPENROUTER_MODEL=mistralai/mistral-7b-instruct:free
+OPENROUTER_MODEL=openrouter/free
+OPENROUTER_MODELS=openrouter/free,mistralai/mistral-7b-instruct:free,meta-llama/llama-3.2-3b-instruct:free
 GEMINI_API_KEY=your_google_ai_studio_api_key
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.1-flash-lite
+GEMINI_MODELS=gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-2.5-flash
 AI_PROVIDER_ORDER=gemini,openrouter
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_KEY=your_supabase_secret_key_starts_with_sb_secret_or_legacy_service_role_jwt_starts_with_eyJ
@@ -28,9 +30,9 @@ CORS_ORIGINS=http://localhost:5173
 
 `SUPABASE_SERVICE_KEY` must be Supabase's server-side secret key, usually starting with `sb_secret_`, or the legacy `service_role` JWT API key, usually starting with `eyJ`. Do not use the database password, JWT secret, anon key, or publishable key.
 
-`OPENROUTER_MODEL` controls the first chat and summary model. If it is missing or blank, Memvora uses `mistralai/mistral-7b-instruct:free`.
+`GEMINI_MODELS` and `OPENROUTER_MODELS` are comma-separated fallback lists. Memvora tries up to three Gemini models first, then up to three OpenRouter free models, following `AI_PROVIDER_ORDER`.
 
-`GEMINI_API_KEY` is optional but recommended. When OpenRouter free models are rate-limited or temporarily unavailable, Memvora automatically falls back to Gemini. If `OPENROUTER_API_KEY` is blank and `GEMINI_API_KEY` is set, Memvora uses Gemini directly.
+`GEMINI_API_KEY` is optional but recommended. When Gemini models are rate-limited or unavailable, Memvora automatically falls back to OpenRouter if configured. If `OPENROUTER_API_KEY` is blank and `GEMINI_API_KEY` is set, Memvora uses Gemini only.
 
 `AI_PROVIDER_ORDER` controls provider priority. The default is `gemini,openrouter`, which uses Gemini first and falls back to OpenRouter.
 
@@ -73,9 +75,11 @@ Required Railway backend variables:
 
 ```env
 OPENROUTER_API_KEY=your_openrouter_api_key
-OPENROUTER_MODEL=mistralai/mistral-7b-instruct:free
+OPENROUTER_MODEL=openrouter/free
+OPENROUTER_MODELS=openrouter/free,mistralai/mistral-7b-instruct:free,meta-llama/llama-3.2-3b-instruct:free
 GEMINI_API_KEY=your_google_ai_studio_api_key
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.1-flash-lite
+GEMINI_MODELS=gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-2.5-flash
 AI_PROVIDER_ORDER=gemini,openrouter
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_KEY=your_supabase_secret_or_service_role_key

@@ -33,7 +33,7 @@ async def extract_text_from_file(file: UploadFile) -> tuple[str, str]:
         return content.decode("utf-8", errors="ignore").strip(), "text"
 
     if filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")) or content_type in SUPPORTED_IMAGE_TYPES:
-        return await extract_text_from_image(content, content_type or guess_image_content_type(filename)), "screenshot"
+        return await extract_text_from_image(content, content_type or guess_image_content_type(filename), filename), "screenshot"
 
     raise ValueError("Please upload a PDF, TXT, Markdown, PNG, JPG, or WebP file.")
 
@@ -61,9 +61,17 @@ def extract_gemini_text(data: dict) -> str:
     return text.strip()
 
 
-async def extract_text_from_image(content: bytes, content_type: str) -> str:
+def build_image_fallback_text(filename: str, reason: str) -> str:
+    return (
+        f"Screenshot upload: {filename}\n\n"
+        f"{reason} Memvora saved this screenshot memory without OCR text. "
+        "Add a short note or edit this memory later to make it easier to search and chat with."
+    )
+
+
+async def extract_text_from_image(content: bytes, content_type: str, filename: str = "screenshot") -> str:
     if not settings.gemini_api_key:
-        raise ValueError("Screenshot uploads need GEMINI_API_KEY because Memvora uses Gemini to read images.")
+        return build_image_fallback_text(filename, "Gemini OCR is not configured.")
 
     if content_type not in SUPPORTED_IMAGE_TYPES:
         content_type = "image/png"
@@ -94,17 +102,23 @@ async def extract_text_from_image(content: bytes, content_type: str) -> str:
             "maxOutputTokens": 1200,
         },
     }
-    url = GEMINI_URL_TEMPLATE.format(model=settings.gemini_model)
-
     try:
         async with httpx.AsyncClient(timeout=45) as client:
-            response = await client.post(url, params={"key": settings.gemini_api_key}, json=payload)
-            response.raise_for_status()
-            extracted_text = extract_gemini_text(response.json())
+            last_error: Exception | None = None
+            for model in settings.gemini_model_list:
+                try:
+                    response = await client.post(GEMINI_URL_TEMPLATE.format(model=model), params={"key": settings.gemini_api_key}, json=payload)
+                    response.raise_for_status()
+                    extracted_text = extract_gemini_text(response.json())
+                    break
+                except Exception as exc:
+                    last_error = exc
+            else:
+                raise last_error or RuntimeError("Gemini returned no screenshot OCR response.")
     except httpx.HTTPStatusError as exc:
-        raise ValueError("Gemini could not read this screenshot. Check your Gemini key, model, or rate limits.") from exc
+        return build_image_fallback_text(filename, "Gemini could not read this screenshot because the key, model, or rate limit failed.")
     except Exception as exc:
-        raise ValueError("Memvora could not read text from this screenshot.") from exc
+        return build_image_fallback_text(filename, "Memvora could not read text from this screenshot.")
 
     return f"Screenshot text and visual summary:\n\n{extracted_text}"
 

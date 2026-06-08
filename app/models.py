@@ -24,6 +24,11 @@ class MemoryResponse(BaseModel):
     created_at: str
 
 
+class MemoryUpdateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    original_content: str = Field(..., min_length=1)
+
+
 class SearchResponse(BaseModel):
     results: list[dict]
 

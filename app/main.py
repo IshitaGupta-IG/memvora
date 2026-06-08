@@ -3,8 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth import get_current_user
 from app.config import settings
-from app.models import ChatRequest, ChatResponse, SearchResponse, SummaryRequest, SummaryResponse, UploadResponse
-from app.services.memories import build_context, create_memory, list_memories, search_memories
+from app.models import ChatRequest, ChatResponse, MemoryUpdateRequest, SearchResponse, SummaryRequest, SummaryResponse, UploadResponse
+from app.services.memories import build_context, create_memory, delete_memory, list_memories, search_memories, update_memory
 from app.services.openrouter import ask_openrouter, summarize_memories
 from app.services.text_processing import extract_text_from_file, extract_text_from_url, preview_text
 
@@ -75,6 +75,22 @@ async def upload_memory(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/memories/{memory_id}", response_model=UploadResponse)
+async def edit_memory(memory_id: str, request: MemoryUpdateRequest, user: dict = Depends(get_current_user)) -> UploadResponse:
+    result = update_memory(user["id"], memory_id, request.title.strip(), request.original_content.strip())
+    return UploadResponse(
+        memory_id=result["memory"]["id"],
+        title=result["memory"]["title"],
+        chunks_created=result["chunks_created"],
+    )
+
+
+@app.delete("/memories/{memory_id}")
+async def remove_memory(memory_id: str, user: dict = Depends(get_current_user)) -> dict:
+    delete_memory(user["id"], memory_id)
+    return {"status": "deleted"}
 
 
 @app.get("/search", response_model=SearchResponse)
